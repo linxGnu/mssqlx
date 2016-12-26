@@ -29,13 +29,9 @@ Below is an example which shows some common use cases for mssqlx.
 package main
 
 import (
+    _ "github.com/lib/pq"
     "database/sql"
-
-	"github.com/jmoiron/sqlx/types"
-	_ "github.com/lib/pq"
-
-	"github.com/linxGnu/mssqlx"
-
+    "github.com/jmoiron/sqlx"
     "log"
 )
 
@@ -51,13 +47,6 @@ CREATE TABLE place (
     city text NULL,
     telcode integer
 )`
-
-type SpaceCow struct {
-	Id                   uint
-	Data                 types.JSONText
-	Created_at           time.Time
-	Updated_at           time.Time
-}
 
 type Person struct {
     FirstName string `db:"first_name"`
@@ -148,7 +137,7 @@ func main() {
     // Place{Country:"Singapore", City:sql.NullString{String:"", Valid:false}, TelCode:65}
 
     // Named queries, using `:name` as the bindvar.  Automatic bindvar support
-    // which takes into account the dbtype based on the driverName on mssqlx.Connect
+    // which takes into account the dbtype based on the driverName on sqlx.Open/Connect
     _, err = db.NamedExecOnMaster(`INSERT INTO person (first_name,last_name,email) VALUES (:first,:last,:email)`, 
         map[string]interface{}{
             "first": "Bin",
