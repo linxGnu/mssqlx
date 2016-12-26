@@ -836,14 +836,12 @@ func ConnectMasterSlaves(driverName string, masterDSNs string, slaveDSNs []strin
 	n := 0
 
 	// Concurrency connect to masters
-	for i := range masterDSNs {
-		go func(mId, eId int) {
-			dbs.masters[mId], errResult[eId] = Connect(driverName, masterDSNs)
-			dbs.all[eId] = dbs.masters[mId]
-			c <- 0
-		}(i, n)
-		n++
-	}
+	go func(mId, eId int) {
+		dbs.masters[mId], errResult[eId] = Connect(driverName, masterDSNs)
+		dbs.all[eId] = dbs.masters[mId]
+		c <- 0
+	}(0, n)
+	n++
 
 	// Concurrency connect to slaves
 	for i := range slaveDSNs {
