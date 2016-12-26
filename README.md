@@ -14,11 +14,11 @@ Major concepts are:
 Notices:
 
 * You should call delete, insert, update query only on master. 
-* Api supports executing query on Master or Slave only. Function name for querying on Master only has suffix "OnMaster". unction name for querying on Master only has suffix "OnSlave".
+* Api supports executing query on Master or Slave only. Function name for querying on Master only has suffix "OnMaster", querying on Slaves only has suffix "OnSlave".
 
 ## install
 
-    please using glide to install github.com/linxGnu/mssqlx. It also installs original sqlx as its dependencies.
+    please using glide to install github.com/linxGnu/mssqlx. It also installs original sqlx as dependency.
 
 ## usage
 
@@ -29,9 +29,13 @@ Below is an example which shows some common use cases for mssqlx.
 package main
 
 import (
-    _ "github.com/lib/pq"
     "database/sql"
-    "github.com/jmoiron/sqlx"
+
+	"github.com/jmoiron/sqlx/types"
+	_ "github.com/lib/pq"
+
+	"github.com/linxGnu/mssqlx"
+
     "log"
 )
 
@@ -48,6 +52,13 @@ CREATE TABLE place (
     telcode integer
 )`
 
+type SpaceCow struct {
+	Id                   uint
+	Data                 types.JSONText
+	Created_at           time.Time
+	Updated_at           time.Time
+}
+
 type Person struct {
     FirstName string `db:"first_name"`
     LastName  string `db:"last_name"`
@@ -61,13 +72,10 @@ type Place struct {
 }
 
 func main() {
-    // this Pings the database trying to connect, panics on error
-    // use sqlx.Open() for sql.Open() semantics
-
     masterDNS := "user=foo dbname=bar sslmode=disable"
     slaveDNS := []string{"user=readonly dbname=bar sslmode=disable"}
 
-    db, err := sqlx.ConnectMasterSlaves("postgres", masterDNS, slaveDNS)
+    db, err := mssqlx.ConnectMasterSlaves("postgres", masterDNS, slaveDNS)
     if err != nil {
         log.Fatalln(err)
     }
@@ -137,7 +145,7 @@ func main() {
     // Place{Country:"Singapore", City:sql.NullString{String:"", Valid:false}, TelCode:65}
 
     // Named queries, using `:name` as the bindvar.  Automatic bindvar support
-    // which takes into account the dbtype based on the driverName on sqlx.Open/Connect
+    // which takes into account the dbtype based on the driverName on mssqlx.Connect
     _, err = db.NamedExecOnMaster(`INSERT INTO person (first_name,last_name,email) VALUES (:first,:last,:email)`, 
         map[string]interface{}{
             "first": "Bin",
