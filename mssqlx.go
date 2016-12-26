@@ -543,15 +543,15 @@ func (dbs *DBs) NamedQuery(query string, arg interface{}) (*Rows, error) {
 	return _namedQuery(dbs.all, query, arg)
 }
 
-// NamedQueryMaster using this DB.
+// NamedQueryOnMaster using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
-func (dbs *DBs) NamedQueryMaster(query string, arg interface{}) (*Rows, error) {
+func (dbs *DBs) NamedQueryOnMaster(query string, arg interface{}) (*Rows, error) {
 	return _namedQuery(dbs.masters, query, arg)
 }
 
-// NamedQuerySlave using this DB.
+// NamedQueryOnSlave using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
-func (dbs *DBs) NamedQuerySlave(query string, arg interface{}) (*Rows, error) {
+func (dbs *DBs) NamedQueryOnSlave(query string, arg interface{}) (*Rows, error) {
 	return _namedQuery(dbs.slaves, query, arg)
 }
 
@@ -619,15 +619,15 @@ func (dbs *DBs) NamedExec(query string, arg interface{}) (sql.Result, error) {
 	return _namedExec(dbs.all, query, arg)
 }
 
-// NamedExecMaster using this DB.
+// NamedExecOnMaster using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
-func (dbs *DBs) NamedExecMaster(query string, arg interface{}) (sql.Result, error) {
+func (dbs *DBs) NamedExecOnMaster(query string, arg interface{}) (sql.Result, error) {
 	return _namedExec(dbs.masters, query, arg)
 }
 
-// NamedExecSlave using this DB.
+// NamedExecOnSlave using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
-func (dbs *DBs) NamedExecSlave(query string, arg interface{}) (sql.Result, error) {
+func (dbs *DBs) NamedExecOnSlave(query string, arg interface{}) (sql.Result, error) {
 	return _namedExec(dbs.slaves, query, arg)
 }
 
@@ -702,15 +702,15 @@ func (dbs *DBs) Queryx(query string, args ...interface{}) (*Rows, error) {
 	return _queryx(dbs.all, query, args...)
 }
 
-// QueryxMaster queries the database and returns an *Rows.
+// QueryxOnMaster queries the database and returns an *Rows.
 // Any placeholder parameters are replaced with supplied args.
-func (dbs *DBs) QueryxMaster(query string, args ...interface{}) (*Rows, error) {
+func (dbs *DBs) QueryxOnMaster(query string, args ...interface{}) (*Rows, error) {
 	return _queryx(dbs.masters, query, args...)
 }
 
-// QueryxSlave queries the database and returns an *Rows.
+// QueryxOnSlave queries the database and returns an *Rows.
 // Any placeholder parameters are replaced with supplied args.
-func (dbs *DBs) QueryxSlave(query string, args ...interface{}) (*Rows, error) {
+func (dbs *DBs) QueryxOnSlave(query string, args ...interface{}) (*Rows, error) {
 	return _queryx(dbs.slaves, query, args...)
 }
 
@@ -746,15 +746,15 @@ func (dbs *DBs) Select(dest interface{}, query string, args ...interface{}) erro
 	return _select(dbs.all, dest, query, args...)
 }
 
-// SelectMaster using this DB.
+// SelectOnMaster using this DB.
 // Any placeholder parameters are replaced with supplied args.
-func (dbs *DBs) SelectMaster(dest interface{}, query string, args ...interface{}) error {
+func (dbs *DBs) SelectOnMaster(dest interface{}, query string, args ...interface{}) error {
 	return _select(dbs.masters, dest, query, args...)
 }
 
-// SelectSlave using this DB.
+// SelectOnSlave using this DB.
 // Any placeholder parameters are replaced with supplied args.
-func (dbs *DBs) SelectSlave(dest interface{}, query string, args ...interface{}) error {
+func (dbs *DBs) SelectOnSlave(dest interface{}, query string, args ...interface{}) error {
 	return _select(dbs.slaves, dest, query, args...)
 }
 
@@ -769,15 +769,15 @@ func (dbs *DBs) QueryRowx(query string, args ...interface{}) *Row {
 	return _queryRowx(dbs.all, query, args...)
 }
 
-// QueryRowxMaster queries the database and returns an *Row.
+// QueryRowxOnMaster queries the database and returns an *Row.
 // Any placeholder parameters are replaced with supplied args.
-func (dbs *DBs) QueryRowxMaster(query string, args ...interface{}) *Row {
+func (dbs *DBs) QueryRowxOnMaster(query string, args ...interface{}) *Row {
 	return _queryRowx(dbs.masters, query, args...)
 }
 
-// QueryRowxSlave queries the database and returns an *Row.
+// QueryRowxOnSlave queries the database and returns an *Row.
 // Any placeholder parameters are replaced with supplied args.
-func (dbs *DBs) QueryRowxSlave(query string, args ...interface{}) *Row {
+func (dbs *DBs) QueryRowxOnSlave(query string, args ...interface{}) *Row {
 	return _queryRowx(dbs.slaves, query, args...)
 }
 
@@ -793,17 +793,17 @@ func (dbs *DBs) Get(dest interface{}, query string, args ...interface{}) error {
 	return _get(dbs.all, dest, query, args...)
 }
 
-// GetFromMaster using this DB.
+// GetOnMaster using this DB.
 // Any placeholder parameters are replaced with supplied args.
 // An error is returned if the result set is empty.
-func (dbs *DBs) GetFromMaster(dest interface{}, query string, args ...interface{}) error {
+func (dbs *DBs) GetOnMaster(dest interface{}, query string, args ...interface{}) error {
 	return _get(dbs.masters, dest, query, args...)
 }
 
-// GetFromSlave using this DB.
+// GetOnSlave using this DB.
 // Any placeholder parameters are replaced with supplied args.
 // An error is returned if the result set is empty.
-func (dbs *DBs) GetFromSlave(dest interface{}, query string, args ...interface{}) error {
+func (dbs *DBs) GetOnSlave(dest interface{}, query string, args ...interface{}) error {
 	return _get(dbs.slaves, dest, query, args...)
 }
 

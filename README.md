@@ -1,65 +1,28 @@
-#sqlx
+#mssqlx
 
 [![Build Status](https://drone.io/github.com/jmoiron/sqlx/status.png)](https://drone.io/github.com/jmoiron/sqlx/latest) [![Godoc](http://img.shields.io/badge/godoc-reference-blue.svg?style=flat)](https://godoc.org/github.com/jmoiron/sqlx) [![license](http://img.shields.io/badge/license-MIT-red.svg?style=flat)](https://raw.githubusercontent.com/jmoiron/sqlx/master/LICENSE)
 
-sqlx is a library which provides a set of extensions on go's standard
-`database/sql` library.  The sqlx versions of `sql.DB`, `sql.TX`, `sql.Stmt`,
-et al. all leave the underlying interfaces untouched, so that their interfaces
-are a superset on the standard ones.  This makes it relatively painless to
-integrate existing codebases using database/sql with sqlx.
+mssqlx is a forged library of sqlx, capable of querying concurrently to master and its slave. 
+It also provides several similar apis compared to sqlx.
 
-Major additional concepts are:
+Major concepts are:
 
-* Marshal rows into structs (with embedded struct support), maps, and slices
-* Named parameter support including prepared statements
-* `Get` and `Select` to go quickly from query to struct/slice
+* Provide HA solution for select-query since we could make select from read-only slaves.
+* Query execution to slaves or master or all is concurrently.
+* Required at least 2 slaves for HA. When one down, others could give back result.
 
-In addition to the [godoc API documentation](http://godoc.org/github.com/jmoiron/sqlx),
-there is also some [standard documentation](http://jmoiron.github.io/sqlx/) that
-explains how to use `database/sql` along with sqlx.
+Notices:
 
-## Recent Changes
-
-* sqlx/types.JsonText has been renamed to JSONText to follow Go naming conventions.
-
-This breaks backwards compatibility, but it's in a way that is trivially fixable
-(`s/JsonText/JSONText/g`).  The `types` package is both experimental and not in
-active development currently.
-
-* Using Go 1.6 and below with `types.JSONText` and `types.GzippedText` can be _potentially unsafe_, **especially** when used with common auto-scan sqlx idioms like `Select` and `Get`. See [golang bug #13905](https://github.com/golang/go/issues/13905).
-
-### Backwards Compatibility
-
-There is no Go1-like promise of absolute stability, but I take the issue seriously
-and will maintain the library in a compatible state unless vital bugs prevent me 
-from doing so.  Since [#59](https://github.com/jmoiron/sqlx/issues/59) and 
-[#60](https://github.com/jmoiron/sqlx/issues/60) necessitated breaking behavior, 
-a wider API cleanup was done at the time of fixing.  It's possible this will happen
-in future;  if it does, a git tag will be provided for users requiring the old
-behavior to continue to use it until such a time as they can migrate.
+* You should call delete, insert, update query only on master. 
+* Api supports executing query on Master or Slave only. Function name for querying on Master only has suffix "OnMaster". unction name for querying on Master only has suffix "OnSlave".
 
 ## install
 
-    go get github.com/jmoiron/sqlx
-
-## issues
-
-Row headers can be ambiguous (`SELECT 1 AS a, 2 AS a`), and the result of
-`Columns()` does not fully qualify column names in queries like:
-
-```sql
-SELECT a.id, a.name, b.id, b.name FROM foos AS a JOIN foos AS b ON a.parent = b.id;
-```
-
-making a struct or map destination ambiguous.  Use `AS` in your queries
-to give columns distinct names, `rows.Scan` to scan them manually, or 
-`SliceScan` to get a slice of results.
+    please using glide to install github.com/linxGnu/mssqlx. It also installs original sqlx as its dependencies.
 
 ## usage
 
-Below is an example which shows some common use cases for sqlx.  Check 
-[sqlx_test.go](https://github.com/jmoiron/sqlx/blob/master/sqlx_test.go) for more
-usage.
+Below is an example which shows some common use cases for mssqlx.
 
 
 ```go
@@ -100,16 +63,20 @@ type Place struct {
 func main() {
     // this Pings the database trying to connect, panics on error
     // use sqlx.Open() for sql.Open() semantics
-    db, err := sqlx.Connect("postgres", "user=foo dbname=bar sslmode=disable")
+
+    masterDNS := "user=foo dbname=bar sslmode=disable"
+    slaveDNS := []string{"user=readonly dbname=bar sslmode=disable"}
+
+    db, err := sqlx.ConnectMasterSlaves("postgres", masterDNS, slaveDNS)
     if err != nil {
         log.Fatalln(err)
     }
 
     // exec the schema or fail; multi-statement Exec behavior varies between
     // database drivers;  pq will exec them all, sqlite3 won't, ymmv
-    db.MustExec(schema)
+    db.GetMasterDB().MustExec(schema)
     
-    tx := db.MustBegin()
+    tx := db.GetMasterDB().MustBegin()
     tx.MustExec("INSERT INTO person (first_name, last_name, email) VALUES ($1, $2, $3)", "Jason", "Moiron", "jmoiron@jmoiron.net")
     tx.MustExec("INSERT INTO person (first_name, last_name, email) VALUES ($1, $2, $3)", "John", "Doe", "johndoeDNE@gmail.net")
     tx.MustExec("INSERT INTO place (country, city, telcode) VALUES ($1, $2, $3)", "United States", "New York", "1")
@@ -119,9 +86,11 @@ func main() {
     tx.NamedExec("INSERT INTO person (first_name, last_name, email) VALUES (:first_name, :last_name, :email)", &Person{"Jane", "Citizen", "jane.citzen@example.com"})
     tx.Commit()
 
-    // Query the database, storing results in a []Person (wrapped in []interface{})
+    // Query all master and slave databases, storing results in a []Person (wrapped in []interface{})
     people := []Person{}
     db.Select(&people, "SELECT * FROM person ORDER BY first_name ASC")
+    // or select from slaves only: db.SelectOnSlave(&people, "SELECT * FROM person ORDER BY first_name ASC")
+    // or select from master only: db.SelectOnMaster(&people, "SELECT * FROM person ORDER BY first_name ASC")
     jason, john := people[0], people[1]
 
     fmt.Printf("%#v\n%#v", jason, john)
@@ -131,6 +100,8 @@ func main() {
     // You can also get a single result, a la QueryRow
     jason = Person{}
     err = db.Get(&jason, "SELECT * FROM person WHERE first_name=$1", "Jason")
+    // or get from slaves only: db.GetOnSlave(&people, "SELECT * FROM person ORDER BY first_name ASC")
+    // or get from master only: db.GetOnMaster(&people, "SELECT * FROM person ORDER BY first_name ASC")
     fmt.Printf("%#v\n", jason)
     // Person{FirstName:"Jason", LastName:"Moiron", Email:"jmoiron@jmoiron.net"}
 
@@ -150,7 +121,10 @@ func main() {
 
     // Loop through rows using only one struct
     place := Place{}
-    rows, err := db.Queryx("SELECT * FROM place")
+    rows, err := db.Queryx("SELECT * FROM place") 
+    // or db.QueryxOnMaster(...)
+    // or db.QueryxOnSlave(...)
+
     for rows.Next() {
         err := rows.StructScan(&place)
         if err != nil {
@@ -164,7 +138,7 @@ func main() {
 
     // Named queries, using `:name` as the bindvar.  Automatic bindvar support
     // which takes into account the dbtype based on the driverName on sqlx.Open/Connect
-    _, err = db.NamedExec(`INSERT INTO person (first_name,last_name,email) VALUES (:first,:last,:email)`, 
+    _, err = db.NamedExecOnMaster(`INSERT INTO person (first_name,last_name,email) VALUES (:first,:last,:email)`, 
         map[string]interface{}{
             "first": "Bin",
             "last": "Smuth",
