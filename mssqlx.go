@@ -28,8 +28,8 @@ func (dbs *DBs) DriverName() string {
 	return dbs.driverName
 }
 
-// GetMasterDBs get all master database instances
-func (dbs *DBs) GetMasterDBs() *DB {
+// GetMasterDB get all master database instances
+func (dbs *DBs) GetMasterDB() *DB {
 	if dbs.masters == nil || len(dbs.masters) == 0 {
 		return nil
 	}
@@ -809,9 +809,9 @@ func (dbs *DBs) GetFromSlave(dest interface{}, query string, args ...interface{}
 
 // ConnectMasterSlaves to master-slave databases and verify with pings
 //
-// masterDSNs: data source names of Masters
+// masterDSN: data source names of Masters
 // slaveDSNs: data source names of Slaves
-func ConnectMasterSlaves(driverName string, masterDSNs string, slaveDSNs []string) (*DBs, []error) {
+func ConnectMasterSlaves(driverName string, masterDSN string, slaveDSNs []string) (*DBs, []error) {
 	// Validate slave address
 	if slaveDSNs == nil {
 		slaveDSNs = []string{}
@@ -833,15 +833,16 @@ func ConnectMasterSlaves(driverName string, masterDSNs string, slaveDSNs []strin
 
 	// channel to sync routines
 	c := make(chan byte, len(errResult))
-	n := 0
 
-	// Concurrency connect to masters
+	// Concurrency connect to master
 	go func(mId, eId int) {
-		dbs.masters[mId], errResult[eId] = Connect(driverName, masterDSNs)
+		dbs.masters[mId], errResult[eId] = Connect(driverName, masterDSN)
 		dbs.all[eId] = dbs.masters[mId]
 		c <- 0
-	}(0, n)
-	n++
+	}(0, 0)
+
+	// number of db connections
+	n := 1
 
 	// Concurrency connect to slaves
 	for i := range slaveDSNs {
