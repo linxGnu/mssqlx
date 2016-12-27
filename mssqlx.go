@@ -2,25 +2,264 @@ package mssqlx
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 )
 
-// DBs sqlx wrapper supports querying master-slave database instances for HA and scalability
+var (
+	// ErrNoRecord no record found
+	ErrNoRecord = sql.ErrNoRows
+
+	// ErrNetwork networking error
+	ErrNetwork = errors.New("Network error/Connection refused")
+
+	// ErrNoConnection there is no connection to db
+	ErrNoConnection = errors.New("No connection available")
+)
+
+func parseError(err error) error {
+	if _, ok := err.(net.Error); ok {
+		return ErrNetwork
+	}
+
+	if err == sql.ErrNoRows {
+		return ErrNoRecord
+	}
+
+	return err
+}
+
+// dbLinkListNode a node of linked-list contains sqlx.DB
+type dbLinkListNode struct {
+	db   *DB
+	next *dbLinkListNode
+	prev *dbLinkListNode
+}
+
+// dbLinkList a round robin and thread-safe linked-list of sqlx.DB
+type dbLinkList struct {
+	// head and tail of linked-list
+	head *dbLinkListNode
+	tail *dbLinkListNode
+
+	// size of this linked list
+	size int
+
+	// current point on linked-list
+	current *dbLinkListNode
+
+	lock sync.RWMutex
+}
+
+// Next return next element from current node on linked-list. If current node is last node, the next one is head.
+func (c *dbLinkList) next() *dbLinkListNode {
+	c.lock.RLock()
+	if c.current == nil {
+		c.lock.RUnlock()
+		return nil
+	}
+	defer c.lock.RUnlock()
+
+	return c.current.next
+}
+
+// Prev return previous element from current node on linked-list. If current node is head node, the previous one is tail.
+func (c *dbLinkList) prev() *dbLinkListNode {
+	c.lock.RLock()
+	if c.current == nil {
+		c.lock.RUnlock()
+		return nil
+	}
+	defer c.lock.RUnlock()
+
+	return c.current.prev
+}
+
+// add node to last of linked-list
+func (c *dbLinkList) add(node *dbLinkListNode) {
+	if node == nil || node.db == nil {
+		return
+	}
+
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	c.size++
+
+	if c.head == nil {
+		c.head, c.tail, c.current = node, node, node
+		node.next = node
+		node.prev = node
+
+		return
+	}
+
+	node.next, node.prev = c.head, c.tail
+	c.head.prev, c.tail.next = node, node
+
+	c.tail = node
+}
+
+// remove a node
+func (c *dbLinkList) remove(node *dbLinkListNode) bool {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	if node == nil || node.next == nil || node.prev == nil || c.size == 0 { // important to prevent double remove
+		return false
+	}
+
+	node.prev.next, node.next.prev = node.next, node.prev
+
+	// Check size
+	if c.size--; c.size == 0 {
+		c.head, c.tail, c.current = nil, nil, nil
+		node.next, node.prev = nil, nil // important to prevent double remove
+
+		return true
+	}
+
+	if c.current == node {
+		c.current = node.next
+	}
+
+	node.next, node.prev = nil, nil // important to prevent double remove
+	return true
+}
+
+// moveNext get current and make current pointer to next
+func (c *dbLinkList) moveNext() (cur *dbLinkListNode) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	if cur = c.current; cur != nil {
+		c.current = cur.next
+	}
+
+	return
+}
+
+// movePrev get current and make current pointer to previous
+func (c *dbLinkList) movePrev() (cur *dbLinkListNode) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	if cur = c.current; cur != nil {
+		c.current = cur.prev
+	}
+
+	return
+}
+
+// getCurrentNode get current pointer node
+func (c *dbLinkList) getCurrentNode() *dbLinkListNode {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+
+	return c.current
+}
+
+// clear all nodes
+func (c *dbLinkList) clear() {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	c.head, c.tail, c.current = nil, nil, nil
+}
+
+// dbBalancer database balancer and health checker.
+type dbBalancer struct {
+	dbs                   *dbLinkList
+	fail                  chan *DB
+	numberOfHealthChecker int
+}
+
+// init balancer and start health checkers
+func (c *dbBalancer) init(numHealthChecker int, numDbInstance int) {
+	if numHealthChecker <= 0 {
+		numHealthChecker = 1
+	}
+
+	c.numberOfHealthChecker = numHealthChecker
+	c.dbs = &dbLinkList{}
+	c.fail = make(chan *DB, numDbInstance)
+
+	for i := 0; i < numHealthChecker; i++ {
+		go c.healthChecker()
+	}
+}
+
+// add a db connection to handle in balancer
+func (c *dbBalancer) add(db *DB) {
+	c.dbs.add(&dbLinkListNode{db: db})
+}
+
+// get a db to handle our query
+func (c *dbBalancer) get() *dbLinkListNode {
+	return c.dbs.moveNext()
+}
+
+// failure make a db node become failure and auto health tracking
+func (c *dbBalancer) failure(node *dbLinkListNode) {
+	defer func() {
+		if e := recover(); e != nil {
+		}
+	}()
+
+	if c.dbs.remove(node) { // remove this node
+		c.fail <- node.db // give to health checker
+	}
+}
+
+// healthChecker daemon to check health of db connection
+func (c *dbBalancer) healthChecker() {
+	defer func() {
+		if e := recover(); e != nil {
+		}
+	}()
+
+	for db := range c.fail {
+		if db == nil {
+			continue
+		}
+
+		if err := db.Ping(); err == nil {
+			c.dbs.add(&dbLinkListNode{db: db})
+			continue
+		}
+
+		c.fail <- db
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func (c *dbBalancer) destroy() {
+	c.dbs.clear()
+	close(c.fail)
+}
+
+// DBs sqlx wrapper supports querying master-slave database instances for HA and scalability, auto-balancer integrated.
 type DBs struct {
 	driverName string
 
-	// master and slave database instances
-	masters []*DB
-	slaves  []*DB
+	// master instances
+	masters  *dbBalancer
+	_masters []*DB
+
+	// slaves instances
+	slaves  *dbBalancer
+	_slaves []*DB
 
 	// master and slave lock
 	masterLock sync.RWMutex
 	slaveLock  sync.RWMutex
 
 	// store all database instances
-	all []*DB
+	all  *dbBalancer
+	_all []*DB
 }
 
 // DriverName returns the driverName passed to the Open function for this DB.
@@ -30,16 +269,16 @@ func (dbs *DBs) DriverName() string {
 
 // GetMasterDB get all master database instances
 func (dbs *DBs) GetMasterDB() *DB {
-	if dbs.masters == nil || len(dbs.masters) == 0 {
+	if dbs._masters == nil || len(dbs._masters) == 0 {
 		return nil
 	}
 
-	return dbs.masters[0]
+	return dbs._masters[0]
 }
 
 // GetSlaveDBs get all slave database instances
 func (dbs *DBs) GetSlaveDBs() []*DB {
-	return dbs.slaves
+	return dbs._slaves
 }
 
 func _ping(target []*DB) []error {
@@ -73,17 +312,17 @@ func _ping(target []*DB) []error {
 
 // Ping all master-slave database instances
 func (dbs *DBs) Ping() []error {
-	return _ping(dbs.all)
+	return _ping(dbs._all)
 }
 
 // PingMaster all master database instances
 func (dbs *DBs) PingMaster() []error {
-	return _ping(dbs.masters)
+	return _ping(dbs._masters)
 }
 
 // PingSlave all slave database instances
 func (dbs *DBs) PingSlave() []error {
-	return _ping(dbs.slaves)
+	return _ping(dbs._slaves)
 }
 
 func _close(target []*DB) []error {
@@ -115,40 +354,59 @@ func _close(target []*DB) []error {
 	return errResult
 }
 
-// Close closes all database instances, releasing any open resources.
+// Destroy closes all database instances, releasing any open resources.
 //
 // It is rare to Close a DB, as the DB handle is meant to be
 // long-lived and shared between many goroutines.
-func (dbs *DBs) Close() []error {
+func (dbs *DBs) Destroy() []error {
 	dbs.masterLock.Lock()
 	defer dbs.masterLock.Unlock()
 
 	dbs.slaveLock.Lock()
 	defer dbs.slaveLock.Unlock()
 
-	return _close(dbs.all)
+	res := _close(dbs._all)
+
+	if dbs.masters != nil {
+		dbs.masters.destroy()
+	}
+
+	if dbs.slaves != nil {
+		dbs.slaves.destroy()
+	}
+
+	dbs.all.destroy()
+	return res
 }
 
-// CloseMaster closes all master database instances, releasing any open resources.
+// DestroyMaster closes all master database instances, releasing any open resources.
 //
 // It is rare to Close a DB, as the DB handle is meant to be
 // long-lived and shared between many goroutines.
-func (dbs *DBs) CloseMaster() []error {
+func (dbs *DBs) DestroyMaster() []error {
 	dbs.masterLock.Lock()
 	defer dbs.masterLock.Unlock()
 
-	return _close(dbs.masters)
+	if dbs.masters != nil {
+		dbs.masters.destroy()
+	}
+
+	return _close(dbs._masters)
 }
 
-// CloseSlave closes all master database instances, releasing any open resources.
+// DestroySlave closes all master database instances, releasing any open resources.
 //
 // It is rare to Close a DB, as the DB handle is meant to be
 // long-lived and shared between many goroutines.
-func (dbs *DBs) CloseSlave() []error {
+func (dbs *DBs) DestroySlave() []error {
 	dbs.slaveLock.Lock()
 	defer dbs.slaveLock.Unlock()
 
-	return _close(dbs.slaves)
+	if dbs.slaves != nil {
+		dbs.slaves.destroy()
+	}
+
+	return _close(dbs._slaves)
 }
 
 func _setMaxIdleConns(target []*DB, n int) {
@@ -190,7 +448,7 @@ func (dbs *DBs) SetMaxIdleConns(n int) {
 	dbs.slaveLock.Lock()
 	defer dbs.slaveLock.Unlock()
 
-	_setMaxIdleConns(dbs.all, n)
+	_setMaxIdleConns(dbs._all, n)
 }
 
 // SetMasterMaxIdleConns sets the maximum number of connections in the idle
@@ -204,7 +462,7 @@ func (dbs *DBs) SetMasterMaxIdleConns(n int) {
 	dbs.masterLock.Lock()
 	defer dbs.masterLock.Unlock()
 
-	_setMaxIdleConns(dbs.masters, n)
+	_setMaxIdleConns(dbs._masters, n)
 }
 
 // SetSlaveMaxIdleConns sets the maximum number of connections in the idle
@@ -218,7 +476,7 @@ func (dbs *DBs) SetSlaveMaxIdleConns(n int) {
 	dbs.slaveLock.Lock()
 	defer dbs.slaveLock.Unlock()
 
-	_setMaxIdleConns(dbs.slaves, n)
+	_setMaxIdleConns(dbs._slaves, n)
 }
 
 func _setMaxOpenConns(target []*DB, n int) {
@@ -261,7 +519,7 @@ func (dbs *DBs) SetMaxOpenConns(n int) {
 	dbs.slaveLock.Lock()
 	defer dbs.slaveLock.Unlock()
 
-	_setMaxOpenConns(dbs.all, n)
+	_setMaxOpenConns(dbs._all, n)
 }
 
 // SetMasterMaxOpenConns sets the maximum number of open connections to the master databases.
@@ -276,7 +534,7 @@ func (dbs *DBs) SetMasterMaxOpenConns(n int) {
 	dbs.masterLock.Lock()
 	defer dbs.masterLock.Unlock()
 
-	_setMaxOpenConns(dbs.masters, n)
+	_setMaxOpenConns(dbs._masters, n)
 }
 
 // SetSlaveMaxOpenConns sets the maximum number of open connections to the slave databases.
@@ -291,7 +549,7 @@ func (dbs *DBs) SetSlaveMaxOpenConns(n int) {
 	dbs.slaveLock.Lock()
 	defer dbs.slaveLock.Unlock()
 
-	_setMaxOpenConns(dbs.slaves, n)
+	_setMaxOpenConns(dbs._slaves, n)
 }
 
 func _setConnMaxLifetime(target []*DB, d time.Duration) {
@@ -331,7 +589,7 @@ func (dbs *DBs) SetConnMaxLifetime(d time.Duration) {
 	dbs.slaveLock.Lock()
 	defer dbs.slaveLock.Unlock()
 
-	_setConnMaxLifetime(dbs.all, d)
+	_setConnMaxLifetime(dbs._all, d)
 }
 
 // SetMasterConnMaxLifetime sets the maximum amount of time a master connection may be reused.
@@ -343,7 +601,7 @@ func (dbs *DBs) SetMasterConnMaxLifetime(d time.Duration) {
 	dbs.masterLock.Lock()
 	defer dbs.masterLock.Unlock()
 
-	_setConnMaxLifetime(dbs.masters, d)
+	_setConnMaxLifetime(dbs._masters, d)
 }
 
 // SetSlaveConnMaxLifetime sets the maximum amount of time a slave connection may be reused.
@@ -355,7 +613,7 @@ func (dbs *DBs) SetSlaveConnMaxLifetime(d time.Duration) {
 	dbs.slaveLock.Lock()
 	defer dbs.slaveLock.Unlock()
 
-	_setConnMaxLifetime(dbs.slaves, d)
+	_setConnMaxLifetime(dbs._slaves, d)
 }
 
 func _stats(target []*DB) []sql.DBStats {
@@ -395,7 +653,7 @@ func (dbs *DBs) Stats() []sql.DBStats {
 	dbs.slaveLock.Lock()
 	defer dbs.slaveLock.Unlock()
 
-	return _stats(dbs.all)
+	return _stats(dbs._all)
 }
 
 // StatsMaster returns master database statistics.
@@ -403,7 +661,7 @@ func (dbs *DBs) StatsMaster() []sql.DBStats {
 	dbs.masterLock.Lock()
 	defer dbs.masterLock.Unlock()
 
-	return _stats(dbs.masters)
+	return _stats(dbs._masters)
 }
 
 // StatsSlave returns slave database statistics.
@@ -411,7 +669,7 @@ func (dbs *DBs) StatsSlave() []sql.DBStats {
 	dbs.slaveLock.Lock()
 	defer dbs.slaveLock.Unlock()
 
-	return _stats(dbs.slaves)
+	return _stats(dbs._slaves)
 }
 
 func _mapperFunc(target []*DB, mf func(string) string) {
@@ -442,24 +700,28 @@ func _mapperFunc(target []*DB, mf func(string) string) {
 // MapperFunc sets a new mapper for this db using the default sqlx struct tag
 // and the provided mapper function.
 func (dbs *DBs) MapperFunc(mf func(string) string) {
-	_mapperFunc(dbs.all, mf)
+	_mapperFunc(dbs._all, mf)
 }
 
 // MapperFuncMaster sets a new mapper for this db using the default sqlx struct tag
 // and the provided mapper function.
 func (dbs *DBs) MapperFuncMaster(mf func(string) string) {
-	_mapperFunc(dbs.masters, mf)
+	_mapperFunc(dbs._masters, mf)
 }
 
 // MapperFuncSlave sets a new mapper for this db using the default sqlx struct tag
 // and the provided mapper function.
 func (dbs *DBs) MapperFuncSlave(mf func(string) string) {
-	_mapperFunc(dbs.slaves, mf)
+	_mapperFunc(dbs._slaves, mf)
 }
 
 // Rebind transforms a query from QUESTION to the DB driver's bindvar type.
 func (dbs *DBs) Rebind(query string) string {
-	for _, db := range dbs.all {
+	if dbs._all == nil || len(dbs._all) == 0 {
+		return ""
+	}
+
+	for _, db := range dbs._all {
 		if db != nil {
 			return db.Rebind(query)
 		}
@@ -470,7 +732,11 @@ func (dbs *DBs) Rebind(query string) string {
 
 // BindNamed binds a query using the DB driver's bindvar type.
 func (dbs *DBs) BindNamed(query string, arg interface{}) (string, []interface{}, error) {
-	for _, db := range dbs.all {
+	if dbs._all == nil || len(dbs._all) == 0 {
+		return "", nil, ErrNoConnection
+	}
+
+	for _, db := range dbs._all {
 		if db != nil {
 			return db.BindNamed(query, arg)
 		}
@@ -479,7 +745,7 @@ func (dbs *DBs) BindNamed(query string, arg interface{}) (string, []interface{},
 	return "", nil, nil
 }
 
-func _namedQuery(target []*DB, query string, arg interface{}) (res *Rows, err error) {
+func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *Rows, err error) {
 	defer func() {
 		if e := recover(); e != nil {
 			err = fmt.Errorf("%v", e)
@@ -488,53 +754,28 @@ func _namedQuery(target []*DB, query string, arg interface{}) (res *Rows, err er
 	}()
 
 	if target == nil {
-		return nil, fmt.Errorf("Database connections is not initialized")
+		return nil, ErrNoConnection
 	}
 
-	nn := len(target)
-	if nn == 0 {
-		return nil, fmt.Errorf("Database connections is not initialized")
-	}
-
-	type x struct {
-		rows *Rows
-		err  error
-	}
-
-	c := make(chan *x, nn)
-	for _, db := range target {
-		go func(db *DB, query string, arg interface{}) {
-			defer func() {
-				if e := recover(); e != nil {
-				}
-			}()
-
-			if db != nil {
-				tmp := &x{}
-				tmp.rows, tmp.err = db.NamedQuery(query, arg)
-
-				c <- tmp
-				return
-			}
-
-			c <- &x{
-				err: fmt.Errorf("Database connection not initialized"),
-			}
-		}(db, query, arg)
-	}
-
-	var final *x
-	for i := 0; i < nn; i++ {
-		if tmp := <-c; tmp.err == nil {
-			close(c)
-
-			return tmp.rows, nil
-		} else {
-			final = tmp
+	for {
+		db := target.get()
+		if db == nil {
+			return nil, ErrNoConnection
 		}
-	}
 
-	return final.rows, final.err
+		if db.db == nil {
+			target.failure(db)
+			continue
+		}
+
+		r, e := db.db.NamedQuery(query, arg)
+		if e = parseError(e); e == ErrNetwork {
+			target.failure(db)
+			continue
+		}
+
+		return r, e
+	}
 }
 
 // NamedQuery using this DB.
@@ -555,7 +796,7 @@ func (dbs *DBs) NamedQueryOnSlave(query string, arg interface{}) (*Rows, error) 
 	return _namedQuery(dbs.slaves, query, arg)
 }
 
-func _namedExec(target []*DB, query string, arg interface{}) (res sql.Result, err error) {
+func _namedExec(target *dbBalancer, query string, arg interface{}) (res sql.Result, err error) {
 	defer func() {
 		if e := recover(); e != nil {
 			err = fmt.Errorf("%v", e)
@@ -564,53 +805,28 @@ func _namedExec(target []*DB, query string, arg interface{}) (res sql.Result, er
 	}()
 
 	if target == nil {
-		return nil, fmt.Errorf("Database connections is not initialized")
+		return nil, ErrNoConnection
 	}
 
-	nn := len(target)
-	if nn == 0 {
-		return nil, fmt.Errorf("Database connections is not initialized")
-	}
-
-	type x struct {
-		rows sql.Result
-		err  error
-	}
-
-	c := make(chan *x, nn)
-	for _, db := range target {
-		go func(db *DB, query string, arg interface{}) {
-			defer func() {
-				if e := recover(); e != nil {
-				}
-			}()
-
-			if db != nil {
-				tmp := &x{}
-				tmp.rows, tmp.err = db.NamedExec(query, arg)
-
-				c <- tmp
-				return
-			}
-
-			c <- &x{
-				err: fmt.Errorf("Database connection not initialized"),
-			}
-		}(db, query, arg)
-	}
-
-	var final *x
-	for i := 0; i < nn; i++ {
-		if tmp := <-c; tmp.err == nil {
-			close(c)
-
-			return tmp.rows, nil
-		} else {
-			final = tmp
+	for {
+		db := target.get()
+		if db == nil {
+			return nil, ErrNoConnection
 		}
-	}
 
-	return final.rows, final.err
+		if db.db == nil {
+			target.failure(db)
+			continue
+		}
+
+		r, e := db.db.NamedExec(query, arg)
+		if e = parseError(e); e == ErrNetwork {
+			target.failure(db)
+			continue
+		}
+
+		return r, e
+	}
 }
 
 // NamedExec using this DB.
@@ -631,7 +847,7 @@ func (dbs *DBs) NamedExecOnSlave(query string, arg interface{}) (sql.Result, err
 	return _namedExec(dbs.slaves, query, arg)
 }
 
-func _query(target []*DB, query string, args ...interface{}) (dbr *DB, res *sql.Rows, err error) {
+func _query(target *dbBalancer, query string, args ...interface{}) (dbr *DB, res *sql.Rows, err error) {
 	defer func() {
 		if e := recover(); e != nil {
 			err = fmt.Errorf("%v", e)
@@ -640,59 +856,40 @@ func _query(target []*DB, query string, args ...interface{}) (dbr *DB, res *sql.
 	}()
 
 	if target == nil {
-		return nil, nil, fmt.Errorf("Database connections is not initialized")
+		return nil, nil, ErrNoConnection
 	}
 
-	nn := len(target)
-	if nn == 0 {
-		return nil, nil, fmt.Errorf("Database connections is not initialized")
-	}
-
-	type x struct {
-		db   *DB
-		rows *sql.Rows
-		err  error
-	}
-
-	c := make(chan *x, nn)
-	for _, db := range target {
-		go func(db *DB, query string, args []interface{}) {
-			defer func() {
-				if e := recover(); e != nil {
-				}
-			}()
-
-			if db != nil {
-				tmp := &x{db: db}
-				tmp.rows, tmp.err = db.Query(query, args...)
-
-				c <- tmp
-				return
-			}
-
-			c <- &x{err: fmt.Errorf("Database connections is not initialized")}
-		}(db, query, args)
-	}
-
-	var final *x
-	for i := 0; i < nn; i++ {
-		if tmp := <-c; tmp.err == nil {
-			close(c)
-
-			return tmp.db, tmp.rows, tmp.err
-		} else {
-			final = tmp
+	for {
+		db := target.get()
+		if db == nil {
+			return nil, nil, ErrNoConnection
 		}
-	}
 
-	return final.db, final.rows, final.err
+		if db.db == nil {
+			target.failure(db)
+			continue
+		}
+
+		r, e := db.db.Query(query, args...)
+		if e = parseError(e); e == ErrNetwork {
+			target.failure(db)
+			continue
+		}
+
+		return db.db, r, e
+	}
 }
 
-func _queryx(target []*DB, query string, args ...interface{}) (*Rows, error) {
+func _queryx(target *dbBalancer, query string, args ...interface{}) (*Rows, error) {
 	db, r, err := _query(target, query, args...)
 	if err != nil {
 		return nil, err
 	}
+
+	if db == nil {
+		return &Rows{Rows: r}, err
+	}
+
 	return &Rows{Rows: r, unsafe: db.unsafe, Mapper: db.Mapper}, err
 }
 
@@ -714,7 +911,31 @@ func (dbs *DBs) QueryxOnSlave(query string, args ...interface{}) (*Rows, error) 
 	return _queryx(dbs.slaves, query, args...)
 }
 
-func _select(target []*DB, dest interface{}, query string, args ...interface{}) (err error) {
+// QueryRow executes a query that is expected to return at most one row.
+// QueryRow always returns a non-nil value. Errors are deferred until
+// Row's Scan method is called.
+func (dbs *DBs) QueryRow(query string, args ...interface{}) *Row {
+	_, rows, err := _query(dbs.all, query, args...)
+	return &Row{rows: rows, err: err}
+}
+
+// QueryRowOnMaster executes a query that is expected to return at most one row.
+// QueryRow always returns a non-nil value. Errors are deferred until
+// Row's Scan method is called.
+func (dbs *DBs) QueryRowOnMaster(query string, args ...interface{}) *Row {
+	_, rows, err := _query(dbs.masters, query, args...)
+	return &Row{rows: rows, err: err}
+}
+
+// QueryRowOnSlave executes a query that is expected to return at most one row.
+// QueryRow always returns a non-nil value. Errors are deferred until
+// Row's Scan method is called.
+func (dbs *DBs) QueryRowOnSlave(query string, args ...interface{}) *Row {
+	_, rows, err := _query(dbs.slaves, query, args...)
+	return &Row{rows: rows, err: err}
+}
+
+func _select(target *dbBalancer, dest interface{}, query string, args ...interface{}) (err error) {
 	defer func() {
 		if e := recover(); e != nil {
 			err = fmt.Errorf("%v", e)
@@ -722,12 +943,7 @@ func _select(target []*DB, dest interface{}, query string, args ...interface{}) 
 	}()
 
 	if target == nil {
-		return fmt.Errorf("Database connections is not initialized")
-	}
-
-	nn := len(target)
-	if nn == 0 {
-		return fmt.Errorf("Database connections is not initialized")
+		return ErrNoConnection
 	}
 
 	rows, err := _queryx(target, query, args...)
@@ -737,6 +953,7 @@ func _select(target []*DB, dest interface{}, query string, args ...interface{}) 
 
 	// if something happens here, we want to make sure the rows are Closed
 	defer rows.Close()
+
 	return scanAll(rows, dest, false)
 }
 
@@ -758,8 +975,12 @@ func (dbs *DBs) SelectOnSlave(dest interface{}, query string, args ...interface{
 	return _select(dbs.slaves, dest, query, args...)
 }
 
-func _queryRowx(target []*DB, que string, args ...interface{}) *Row {
+func _queryRowx(target *dbBalancer, que string, args ...interface{}) *Row {
 	db, rows, err := _query(target, que, args...)
+	if db == nil {
+		return &Row{rows: rows, err: err}
+	}
+
 	return &Row{rows: rows, err: err, unsafe: db.unsafe, Mapper: db.Mapper}
 }
 
@@ -781,7 +1002,7 @@ func (dbs *DBs) QueryRowxOnSlave(query string, args ...interface{}) *Row {
 	return _queryRowx(dbs.slaves, query, args...)
 }
 
-func _get(target []*DB, dest interface{}, query string, args ...interface{}) error {
+func _get(target *dbBalancer, dest interface{}, query string, args ...interface{}) error {
 	r := _queryRowx(target, query, args...)
 	return r.scanAny(dest, false)
 }
@@ -818,26 +1039,32 @@ func ConnectMasterSlaves(driverName string, masterDSN string, slaveDSNs []string
 	}
 
 	nSlave := len(slaveDSNs)
-
 	errResult := make([]error, 1+nSlave)
-	if len(errResult) == 0 {
-		return nil, nil
-	}
 
 	dbs := &DBs{
 		driverName: driverName,
-		masters:    make([]*DB, 1),
-		slaves:     make([]*DB, nSlave),
-		all:        make([]*DB, 1+nSlave),
+		masters:    &dbBalancer{},
+		_masters:   make([]*DB, 1),
+		slaves:     &dbBalancer{},
+		_slaves:    make([]*DB, nSlave),
+		all:        &dbBalancer{},
+		_all:       make([]*DB, 1+nSlave),
 	}
+	dbs.masters.init(1, 1)
+	dbs.slaves.init((nSlave<<1)/10, nSlave)  // 20%
+	dbs.all.init((1+nSlave)<<1/10, 1+nSlave) // 20%
 
 	// channel to sync routines
 	c := make(chan byte, len(errResult))
 
 	// Concurrency connect to master
 	go func(mId, eId int) {
-		dbs.masters[mId], errResult[eId] = Connect(driverName, masterDSN)
-		dbs.all[eId] = dbs.masters[mId]
+		dbs._masters[mId], errResult[eId] = Connect(driverName, masterDSN)
+		dbs.masters.add(dbs._masters[mId])
+
+		dbs._all[eId] = dbs._masters[mId]
+		dbs.all.add(dbs._masters[mId])
+
 		c <- 0
 	}(0, 0)
 
@@ -847,8 +1074,12 @@ func ConnectMasterSlaves(driverName string, masterDSN string, slaveDSNs []string
 	// Concurrency connect to slaves
 	for i := range slaveDSNs {
 		go func(sId, eId int) {
-			dbs.slaves[sId], errResult[eId] = Connect(driverName, slaveDSNs[sId])
-			dbs.all[eId] = dbs.slaves[sId]
+			dbs._slaves[sId], errResult[eId] = Connect(driverName, slaveDSNs[sId])
+			dbs.slaves.add(dbs._slaves[sId])
+
+			dbs._all[eId] = dbs._slaves[sId]
+			dbs.all.add(dbs._slaves[sId])
+
 			c <- 0
 		}(i, n)
 		n++

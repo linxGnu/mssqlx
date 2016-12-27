@@ -1,20 +1,21 @@
 #mssqlx
 
-[![Build Status](https://drone.io/github.com/jmoiron/sqlx/status.png)](https://drone.io/github.com/jmoiron/sqlx/latest) [![Godoc](http://img.shields.io/badge/godoc-reference-blue.svg?style=flat)](https://godoc.org/github.com/jmoiron/sqlx) [![license](http://img.shields.io/badge/license-MIT-red.svg?style=flat)](https://raw.githubusercontent.com/jmoiron/sqlx/master/LICENSE)
+[![license](http://img.shields.io/badge/license-MIT-red.svg?style=flat)](https://raw.githubusercontent.com/jmoiron/sqlx/master/LICENSE)
 
-mssqlx is a forged library of sqlx, capable of querying concurrently to master and its slave. 
-It also provides several similar apis compared to sqlx.
+mssqlx is capable of doing queries to master-slave database structure, provides very similar APIs compared to sqlx.
 
 Major concepts are:
 
-* Provide HA solution for select-query since we could make select from read-only slaves.
-* Query execution to slaves or master or all is concurrently.
-* Required at least 2 slaves for HA. When one down, others could give back result.
+* Try to keep 100% API compatible to slqx. All additional layers/codes are within mssqlx.go file. All other files are from sqlx.
+* Provide HA solution for select-query. 
+* Simple and lightweight round-robin balancer with auto health checking, distributes workloads across slaves. When one downs, mssqlx moves its client to "failure-zone", avoids querying over this client. As the slave ups again, mssqlx puts (automatically) the client back for upcoming queries.
+* Reduce role of master to delete, insert, update only since all select-queries are on slaves.
 
 Notices:
 
-* You should call delete, insert, update query only on master. 
-* Api supports executing query on Master or Slave only. Function name for querying on Master only has suffix "OnMaster", querying on Slaves only has suffix "OnSlave".
+* Obviously, you must call delete, insert, update query on master. 
+* APIs supports executing query on Master-only or Slave-only (or boths). Function name for querying on Master-only has suffix "OnMaster", querying on Slaves-only has suffix "OnSlave".
+* It's recommended to add at least two TCP-Balancers like Nginx or HAProxy before your slaves for HA and let mssqlx connect to those balancers. When one balancer down (rare but possible), mssqlx switches flow to others.
 
 ## install
 
