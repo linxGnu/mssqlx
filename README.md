@@ -6,7 +6,7 @@ mssqlx is capable of doing queries to master-slave database structure, provides 
 
 Major concepts are:
 
-* Try to keep 100% API compatible to slqx. All additional layers/codes are within mssqlx.go file. All other files are from sqlx.
+* Try to keep 100% API compatible to slqx. All additional layers/codes are within mssqlx.go file. All other files belongs to sqlx. My work is only on mssqlx.go.
 * Provide HA solution for select-query. 
 * Simple and lightweight round-robin balancer with auto health checking, distributes workloads across slaves. When one downs, mssqlx moves its client to "failure-zone", avoids querying over this client. As the slave ups again, mssqlx puts (automatically) the client back for upcoming queries.
 * Reduce role of master to delete, insert, update only since all select-queries are on slaves.
@@ -19,7 +19,7 @@ Notices:
 
 ## install
 
-    please using glide to install github.com/linxGnu/mssqlx. It also installs original sqlx as dependency.
+    go get github.com/linxGnu/mssqlx
 
 ## usage
 
@@ -31,11 +31,11 @@ package main
 
 import (
     "database/sql"
-
-	"github.com/jmoiron/sqlx/types"
+	
 	_ "github.com/lib/pq"
 
-	"github.com/linxGnu/mssqlx"
+    "github.com/linxGnu/mssqlx/types"
+    "github.com/linxGnu/mssqlx"
 
     "log"
 )

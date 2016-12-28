@@ -23,8 +23,8 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/jmoiron/sqlx/reflectx"
 	_ "github.com/lib/pq"
+	"github.com/linxGnu/mssqlx/reflectx"
 	_ "github.com/mattn/go-sqlite3"
 )
 

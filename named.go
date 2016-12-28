@@ -19,7 +19,7 @@ import (
 	"strconv"
 	"unicode"
 
-	"github.com/jmoiron/sqlx/reflectx"
+	"github.com/linxGnu/mssqlx/reflectx"
 )
 
 // NamedStmt is a prepared statement that executes named queries.  Prepare it
