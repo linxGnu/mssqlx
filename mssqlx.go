@@ -293,19 +293,17 @@ func _ping(target []*DB) []error {
 
 	errResult := make([]error, nn)
 
-	c := make(chan byte, nn)
+	var wg sync.WaitGroup
 	for i := range target {
-		go func(ind int) {
+		wg.Add(1)
+		go func(ind int, wg *sync.WaitGroup) {
+			defer wg.Done()
 			if target[ind] != nil {
 				errResult[ind] = target[ind].Ping()
 			}
-			c <- 0
-		}(i)
+		}(i, &wg)
 	}
-
-	for i := 0; i < nn; i++ {
-		<-c
-	}
+	wg.Wait()
 
 	return errResult
 }
@@ -337,19 +335,17 @@ func _close(target []*DB) []error {
 
 	errResult := make([]error, nn)
 
-	c := make(chan byte, nn)
+	var wg sync.WaitGroup
 	for i, db := range target {
-		go func(db *DB, ind int) {
+		wg.Add(1)
+		go func(db *DB, ind int, wg *sync.WaitGroup) {
+			defer wg.Done()
 			if db != nil {
 				errResult[ind] = db.Close()
 			}
-			c <- 0
-		}(db, i)
+		}(db, i, &wg)
 	}
-
-	for i := 0; i < nn; i++ {
-		<-c
-	}
+	wg.Wait()
 
 	return errResult
 }
@@ -419,19 +415,17 @@ func _setMaxIdleConns(target []*DB, n int) {
 		return
 	}
 
-	c := make(chan byte, nn)
+	var wg sync.WaitGroup
 	for _, db := range target {
-		go func(db *DB) {
+		wg.Add(1)
+		go func(db *DB, wg *sync.WaitGroup) {
+			defer wg.Done()
 			if db != nil {
 				db.SetMaxIdleConns(n)
 			}
-			c <- 0
-		}(db)
+		}(db, &wg)
 	}
-
-	for i := 0; i < nn; i++ {
-		<-c
-	}
+	wg.Wait()
 }
 
 // SetMaxIdleConns sets the maximum number of connections in the idle
@@ -489,19 +483,17 @@ func _setMaxOpenConns(target []*DB, n int) {
 		return
 	}
 
-	c := make(chan byte, nn)
+	var wg sync.WaitGroup
 	for _, db := range target {
-		go func(db *DB) {
+		wg.Add(1)
+		go func(db *DB, wg *sync.WaitGroup) {
+			defer wg.Done()
 			if db != nil {
 				db.SetMaxOpenConns(n)
 			}
-			c <- 0
-		}(db)
+		}(db, &wg)
 	}
-
-	for i := 0; i < nn; i++ {
-		<-c
-	}
+	wg.Wait()
 }
 
 // SetMaxOpenConns sets the maximum number of open connections to all master-slave databases.
@@ -562,19 +554,17 @@ func _setConnMaxLifetime(target []*DB, d time.Duration) {
 		return
 	}
 
-	c := make(chan byte, nn)
+	var wg sync.WaitGroup
 	for _, db := range target {
-		go func(db *DB) {
+		wg.Add(1)
+		go func(db *DB, wg *sync.WaitGroup) {
+			defer wg.Done()
 			if db != nil {
 				db.SetConnMaxLifetime(d)
 			}
-			c <- 0
-		}(db)
+		}(db, &wg)
 	}
-
-	for i := 0; i < nn; i++ {
-		<-c
-	}
+	wg.Wait()
 }
 
 // SetConnMaxLifetime sets the maximum amount of time a master-slave connection may be reused.
@@ -628,19 +618,17 @@ func _stats(target []*DB) []sql.DBStats {
 
 	result := make([]sql.DBStats, nn)
 
-	c := make(chan byte, nn)
+	var wg sync.WaitGroup
 	for ind, db := range target {
-		go func(db *DB, ind int) {
+		wg.Add(1)
+		go func(db *DB, ind int, wg *sync.WaitGroup) {
+			defer wg.Done()
 			if db != nil {
 				result[ind] = db.Stats()
-				c <- 0
 			}
-		}(db, ind)
+		}(db, ind, &wg)
 	}
-
-	for i := 0; i < nn; i++ {
-		<-c
-	}
+	wg.Wait()
 
 	return result
 }
@@ -682,19 +670,17 @@ func _mapperFunc(target []*DB, mf func(string) string) {
 		return
 	}
 
-	c := make(chan byte, nn)
+	var wg sync.WaitGroup
 	for ind, db := range target {
+		wg.Add(1)
 		go func(db *DB, ind int) {
+			defer wg.Done()
 			if db != nil {
 				db.MapperFunc(mf)
-				c <- 0
 			}
 		}(db, ind)
 	}
-
-	for i := 0; i < nn; i++ {
-		<-c
-	}
+	wg.Wait()
 }
 
 // MapperFunc sets a new mapper for this db using the default sqlx struct tag
@@ -1003,8 +989,7 @@ func (dbs *DBs) QueryRowxOnSlave(query string, args ...interface{}) *Row {
 }
 
 func _get(target *dbBalancer, dest interface{}, query string, args ...interface{}) error {
-	r := _queryRowx(target, query, args...)
-	return r.scanAny(dest, false)
+	return _queryRowx(target, query, args...).scanAny(dest, false)
 }
 
 // Get using this DB.

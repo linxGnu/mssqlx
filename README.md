@@ -73,10 +73,10 @@ type Place struct {
 }
 
 func main() {
-    masterDNS := "user=foo dbname=bar sslmode=disable"
-    slaveDNS := []string{"user=readonly dbname=bar sslmode=disable"}
+    masterDSN := "user=foo dbname=bar sslmode=disable"
+    slaveDSNs := []string{"user=readonly dbname=bar sslmode=disable"}
 
-    db, err := mssqlx.ConnectMasterSlaves("postgres", masterDNS, slaveDNS)
+    db, err := mssqlx.ConnectMasterSlaves("postgres", masterDSN, slaveDSNs)
     if err != nil {
         log.Fatalln(err)
     }
@@ -111,8 +111,15 @@ func main() {
     err = db.Get(&jason, "SELECT * FROM person WHERE first_name=$1", "Jason")
     // or get from slaves only: db.GetOnSlave(&people, "SELECT * FROM person ORDER BY first_name ASC")
     // or get from master only: db.GetOnMaster(&people, "SELECT * FROM person ORDER BY first_name ASC")
-    fmt.Printf("%#v\n", jason)
-    // Person{FirstName:"Jason", LastName:"Moiron", Email:"jmoiron@jmoiron.net"}
+
+    // Error handling
+    if err == mssqlx.ErrNoRecord {
+        fmt.Println("Jason not found")
+    } else if err != nil {
+        fmt.Println("Error: %v", err)
+    } else {
+        fmt.Printf("%#v\n", jason)
+    }
 
     // if you have null fields and use SELECT *, you must use sql.Null* in your struct
     places := []Place{}
