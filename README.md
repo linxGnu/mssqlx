@@ -85,7 +85,7 @@ func main() {
     // database drivers;  pq will exec them all, sqlite3 won't, ymmv
     db.GetMasterDB().MustExec(schema)
     
-    tx := db.GetMasterDB().MustBegin()
+    tx := db.GetMaster().GetDB().MustBegin()
     tx.MustExec("INSERT INTO person (first_name, last_name, email) VALUES ($1, $2, $3)", "Jason", "Moiron", "jmoiron@jmoiron.net")
     tx.MustExec("INSERT INTO person (first_name, last_name, email) VALUES ($1, $2, $3)", "John", "Doe", "johndoeDNE@gmail.net")
     tx.MustExec("INSERT INTO place (country, city, telcode) VALUES ($1, $2, $3)", "United States", "New York", "1")
