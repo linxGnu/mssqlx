@@ -39,6 +39,14 @@ type dbLinkListNode struct {
 	prev *dbLinkListNode
 }
 
+type DBNode interface {
+	GetDB() *DB
+}
+
+func (c *dbLinkListNode) GetDB() *DB {
+	return c.db
+}
+
 // dbLinkList a round robin and thread-safe linked-list of sqlx.DB
 type dbLinkList struct {
 	// head and tail of linked-list
@@ -267,18 +275,27 @@ func (dbs *DBs) DriverName() string {
 	return dbs.driverName
 }
 
-// GetMasterDB get all master database instances
-func (dbs *DBs) GetMasterDB() *DB {
-	if dbs._masters == nil || len(dbs._masters) == 0 {
-		return nil
-	}
-
-	return dbs._masters[0]
+// GetMaster get master database instance from balancer
+func (dbs *DBs) GetMaster() (DBNode, int) {
+	return dbs.masters.get(), len(dbs._masters)
 }
 
-// GetSlaveDBs get all slave database instances
-func (dbs *DBs) GetSlaveDBs() []*DB {
-	return dbs._slaves
+// ProcessMasterErr ...
+func (dbs *DBs) ProcessMasterErr(db DBNode, err error) {
+	switch db.(type) {
+	case *dbLinkListNode:
+		node := db.(*dbLinkListNode)
+		if err = parseError(err); err == ErrNetwork {
+			dbs.masters.failure(node)
+		}
+	default:
+		return
+	}
+}
+
+// GetAllSlaves get all slave database instances
+func (dbs *DBs) GetAllSlaves() ([]*DB, int) {
+	return dbs._slaves, len(dbs._slaves)
 }
 
 func _ping(target []*DB) []error {
