@@ -1069,7 +1069,6 @@ func _exec(target *dbBalancer, query string, args ...interface{}) (res sql.Resul
 		}
 
 		r, e := db.db.Exec(query, args...)
-		fmt.Println(e)
 		if e = parseError(e); e == ErrNetwork {
 			target.failure(db)
 			continue
