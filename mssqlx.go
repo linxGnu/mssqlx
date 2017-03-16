@@ -1030,6 +1030,54 @@ func (dbs *DBs) GetOnSlave(dest interface{}, query string, args ...interface{}) 
 	return _get(dbs.slaves, dest, query, args...)
 }
 
+// Exec do exec on all
+func (dbs *DBs) Exec(query string, args ...interface{}) (sql.Result, error) {
+	return _exec(dbs.all, query, args)
+}
+
+// Exec do exec on master only
+func (dbs *DBs) ExecMaster(query string, args ...interface{}) (sql.Result, error) {
+	return _exec(dbs.masters, query, args)
+}
+
+// Exec do exec on slave only
+func (dbs *DBs) ExecSlave(query string, args ...interface{}) (sql.Result, error) {
+	return _exec(dbs.slaves, query, args)
+}
+
+func _exec(target *dbBalancer, query string, args ...interface{}) (res sql.Result, err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			err = fmt.Errorf("%v", e)
+			res = nil
+		}
+	}()
+
+	if target == nil {
+		return nil, ErrNoConnection
+	}
+
+	for {
+		db := target.get()
+		if db == nil {
+			return nil, ErrNoConnection
+		}
+
+		if db.db == nil {
+			target.failure(db)
+			continue
+		}
+
+		r, e := db.db.Exec(query, args...)
+		if e = parseError(e); e == ErrNetwork {
+			target.failure(db)
+			continue
+		}
+
+		return r, e
+	}
+}
+
 // ConnectMasterSlaves to master-slave databases and verify with pings
 //
 // masterDSNs: data source names of Masters
