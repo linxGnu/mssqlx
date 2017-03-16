@@ -1032,46 +1032,52 @@ func (dbs *DBs) GetOnSlave(dest interface{}, query string, args ...interface{}) 
 
 // ConnectMasterSlaves to master-slave databases and verify with pings
 //
-// masterDSN: data source names of Masters
+// masterDSNs: data source names of Masters
 // slaveDSNs: data source names of Slaves
-func ConnectMasterSlaves(driverName string, masterDSN string, slaveDSNs []string) (*DBs, []error) {
+func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []string) (*DBs, []error) {
 	// Validate slave address
 	if slaveDSNs == nil {
 		slaveDSNs = []string{}
 	}
 
-	nSlave := len(slaveDSNs)
-	errResult := make([]error, 1+nSlave)
+	if masterDSNs == nil {
+		masterDSNs = []string{}
+	}
 
+	nMaster := len(masterDSNs)
+	nSlave := len(slaveDSNs)
+
+	errResult := make([]error, nMaster+nSlave)
 	dbs := &DBs{
 		driverName: driverName,
 		masters:    &dbBalancer{},
-		_masters:   make([]*DB, 1),
+		_masters:   make([]*DB, nMaster),
 		slaves:     &dbBalancer{},
 		_slaves:    make([]*DB, nSlave),
 		all:        &dbBalancer{},
-		_all:       make([]*DB, 1+nSlave),
+		_all:       make([]*DB, nMaster+nSlave),
 	}
-	dbs.masters.init(1, 1)
-	dbs.slaves.init((nSlave<<1)/10, nSlave)  // 20%
-	dbs.all.init((1+nSlave)<<1/10, 1+nSlave) // 20%
+	dbs.masters.init((nMaster<<1)/10, nMaster) // 20%
+	dbs.slaves.init((nSlave<<1)/10, nSlave)    // 20%
+	dbs.all.init((1+nSlave)<<1/10, 1+nSlave)   // 20%
 
 	// channel to sync routines
 	c := make(chan byte, len(errResult))
 
 	// Concurrency connect to master
-	go func(mId, eId int) {
-		dbs._masters[mId], errResult[eId] = Connect(driverName, masterDSN)
-		dbs.masters.add(dbs._masters[mId])
+	n := 0
+	for i := range masterDSNs {
+		go func(mId, eId int) {
+			dbs._masters[mId], errResult[eId] = Connect(driverName, masterDSNs[mId])
+			dbs.masters.add(dbs._masters[mId])
 
-		dbs._all[eId] = dbs._masters[mId]
-		dbs.all.add(dbs._masters[mId])
+			dbs._all[eId] = dbs._masters[mId]
+			dbs.all.add(dbs._masters[mId])
 
-		c <- 0
-	}(0, 0)
-
-	// number of db connections
-	n := 1
+			c <- 0
+		}(i, n)
+		n++
+	}
 
 	// Concurrency connect to slaves
 	for i := range slaveDSNs {
