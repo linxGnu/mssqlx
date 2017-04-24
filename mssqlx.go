@@ -206,8 +206,12 @@ func (c *dbBalancer) add(db *DB) {
 }
 
 // get a db to handle our query
-func (c *dbBalancer) get() *dbLinkListNode {
-	return c.dbs.moveNext()
+func (c *dbBalancer) get(autoBalance bool) *dbLinkListNode {
+	if autoBalance {
+		return c.dbs.moveNext()
+	}
+
+	return c.dbs.getCurrentNode()
 }
 
 // failure make a db node become failure and auto health tracking
@@ -277,7 +281,7 @@ func (dbs *DBs) DriverName() string {
 
 // GetMaster get master database instance from balancer
 func (dbs *DBs) GetMaster() (DBNode, int) {
-	return dbs.masters.get(), len(dbs._masters)
+	return dbs.masters.get(false), len(dbs._masters)
 }
 
 // ProcessMasterErr ...
@@ -761,7 +765,7 @@ func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *Rows, 
 	}
 
 	for {
-		db := target.get()
+		db := target.get(true)
 		if db == nil {
 			return nil, ErrNoConnection
 		}
@@ -784,19 +788,13 @@ func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *Rows, 
 // NamedQuery using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedQuery(query string, arg interface{}) (*Rows, error) {
-	return _namedQuery(dbs.all, query, arg)
+	return _namedQuery(dbs.slaves, query, arg)
 }
 
 // NamedQueryOnMaster using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedQueryOnMaster(query string, arg interface{}) (*Rows, error) {
 	return _namedQuery(dbs.masters, query, arg)
-}
-
-// NamedQueryOnSlave using this DB.
-// Any named placeholder parameters are replaced with fields from arg.
-func (dbs *DBs) NamedQueryOnSlave(query string, arg interface{}) (*Rows, error) {
-	return _namedQuery(dbs.slaves, query, arg)
 }
 
 func _namedExec(target *dbBalancer, query string, arg interface{}) (res sql.Result, err error) {
@@ -812,7 +810,7 @@ func _namedExec(target *dbBalancer, query string, arg interface{}) (res sql.Resu
 	}
 
 	for {
-		db := target.get()
+		db := target.get(false)
 		if db == nil {
 			return nil, ErrNoConnection
 		}
@@ -835,12 +833,6 @@ func _namedExec(target *dbBalancer, query string, arg interface{}) (res sql.Resu
 // NamedExec using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedExec(query string, arg interface{}) (sql.Result, error) {
-	return _namedExec(dbs.all, query, arg)
-}
-
-// NamedExecOnMaster using this DB.
-// Any named placeholder parameters are replaced with fields from arg.
-func (dbs *DBs) NamedExecOnMaster(query string, arg interface{}) (sql.Result, error) {
 	return _namedExec(dbs.masters, query, arg)
 }
 
@@ -863,7 +855,7 @@ func _query(target *dbBalancer, query string, args ...interface{}) (dbr *DB, res
 	}
 
 	for {
-		db := target.get()
+		db := target.get(true)
 		if db == nil {
 			return nil, nil, ErrNoConnection
 		}
@@ -899,7 +891,7 @@ func _queryx(target *dbBalancer, query string, args ...interface{}) (*Rows, erro
 // Queryx queries the database and returns an *Rows.
 // Any placeholder parameters are replaced with supplied args.
 func (dbs *DBs) Queryx(query string, args ...interface{}) (*Rows, error) {
-	return _queryx(dbs.all, query, args...)
+	return _queryx(dbs.slaves, query, args...)
 }
 
 // QueryxOnMaster queries the database and returns an *Rows.
@@ -908,17 +900,11 @@ func (dbs *DBs) QueryxOnMaster(query string, args ...interface{}) (*Rows, error)
 	return _queryx(dbs.masters, query, args...)
 }
 
-// QueryxOnSlave queries the database and returns an *Rows.
-// Any placeholder parameters are replaced with supplied args.
-func (dbs *DBs) QueryxOnSlave(query string, args ...interface{}) (*Rows, error) {
-	return _queryx(dbs.slaves, query, args...)
-}
-
 // QueryRow executes a query that is expected to return at most one row.
 // QueryRow always returns a non-nil value. Errors are deferred until
 // Row's Scan method is called.
 func (dbs *DBs) QueryRow(query string, args ...interface{}) *Row {
-	_, rows, err := _query(dbs.all, query, args...)
+	_, rows, err := _query(dbs.slaves, query, args...)
 	return &Row{rows: rows, err: err}
 }
 
@@ -927,14 +913,6 @@ func (dbs *DBs) QueryRow(query string, args ...interface{}) *Row {
 // Row's Scan method is called.
 func (dbs *DBs) QueryRowOnMaster(query string, args ...interface{}) *Row {
 	_, rows, err := _query(dbs.masters, query, args...)
-	return &Row{rows: rows, err: err}
-}
-
-// QueryRowOnSlave executes a query that is expected to return at most one row.
-// QueryRow always returns a non-nil value. Errors are deferred until
-// Row's Scan method is called.
-func (dbs *DBs) QueryRowOnSlave(query string, args ...interface{}) *Row {
-	_, rows, err := _query(dbs.slaves, query, args...)
 	return &Row{rows: rows, err: err}
 }
 
@@ -963,19 +941,13 @@ func _select(target *dbBalancer, dest interface{}, query string, args ...interfa
 // Select using this DB.
 // Any placeholder parameters are replaced with supplied args.
 func (dbs *DBs) Select(dest interface{}, query string, args ...interface{}) error {
-	return _select(dbs.all, dest, query, args...)
+	return _select(dbs.slaves, dest, query, args...)
 }
 
 // SelectOnMaster using this DB.
 // Any placeholder parameters are replaced with supplied args.
 func (dbs *DBs) SelectOnMaster(dest interface{}, query string, args ...interface{}) error {
 	return _select(dbs.masters, dest, query, args...)
-}
-
-// SelectOnSlave using this DB.
-// Any placeholder parameters are replaced with supplied args.
-func (dbs *DBs) SelectOnSlave(dest interface{}, query string, args ...interface{}) error {
-	return _select(dbs.slaves, dest, query, args...)
 }
 
 func _queryRowx(target *dbBalancer, que string, args ...interface{}) *Row {
@@ -990,19 +962,13 @@ func _queryRowx(target *dbBalancer, que string, args ...interface{}) *Row {
 // QueryRowx queries the database and returns an *Row.
 // Any placeholder parameters are replaced with supplied args.
 func (dbs *DBs) QueryRowx(query string, args ...interface{}) *Row {
-	return _queryRowx(dbs.all, query, args...)
+	return _queryRowx(dbs.slaves, query, args...)
 }
 
 // QueryRowxOnMaster queries the database and returns an *Row.
 // Any placeholder parameters are replaced with supplied args.
 func (dbs *DBs) QueryRowxOnMaster(query string, args ...interface{}) *Row {
 	return _queryRowx(dbs.masters, query, args...)
-}
-
-// QueryRowxOnSlave queries the database and returns an *Row.
-// Any placeholder parameters are replaced with supplied args.
-func (dbs *DBs) QueryRowxOnSlave(query string, args ...interface{}) *Row {
-	return _queryRowx(dbs.slaves, query, args...)
 }
 
 func _get(target *dbBalancer, dest interface{}, query string, args ...interface{}) error {
@@ -1013,7 +979,7 @@ func _get(target *dbBalancer, dest interface{}, query string, args ...interface{
 // Any placeholder parameters are replaced with supplied args.
 // An error is returned if the result set is empty.
 func (dbs *DBs) Get(dest interface{}, query string, args ...interface{}) error {
-	return _get(dbs.all, dest, query, args...)
+	return _get(dbs.slaves, dest, query, args...)
 }
 
 // GetOnMaster using this DB.
@@ -1023,20 +989,8 @@ func (dbs *DBs) GetOnMaster(dest interface{}, query string, args ...interface{})
 	return _get(dbs.masters, dest, query, args...)
 }
 
-// GetOnSlave using this DB.
-// Any placeholder parameters are replaced with supplied args.
-// An error is returned if the result set is empty.
-func (dbs *DBs) GetOnSlave(dest interface{}, query string, args ...interface{}) error {
-	return _get(dbs.slaves, dest, query, args...)
-}
-
-// Exec do exec on all
+// Exec do exec on masters
 func (dbs *DBs) Exec(query string, args ...interface{}) (sql.Result, error) {
-	return _exec(dbs.all, query, args...)
-}
-
-// Exec do exec on master only
-func (dbs *DBs) ExecMaster(query string, args ...interface{}) (sql.Result, error) {
 	return _exec(dbs.masters, query, args...)
 }
 
@@ -1058,7 +1012,7 @@ func _exec(target *dbBalancer, query string, args ...interface{}) (res sql.Resul
 	}
 
 	for {
-		db := target.get()
+		db := target.get(false)
 		if db == nil {
 			return nil, ErrNoConnection
 		}
