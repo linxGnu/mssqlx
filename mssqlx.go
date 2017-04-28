@@ -26,7 +26,7 @@ func parseError(db *DB, err error) error {
 		return ErrNetwork
 	}
 
-	if db.Ping() != nil {
+	if _, err := db.Exec("SELECT 1"); err != nil {
 		return ErrNetwork
 	}
 
@@ -133,6 +133,14 @@ func (c *dbLinkList) remove(node *dbLinkListNode) bool {
 
 	if c.current == node {
 		c.current = node.next
+	}
+
+	if c.head == node {
+		c.head = node.next
+	}
+
+	if c.tail == node {
+		c.tail = node.prev
 	}
 
 	node.next, node.prev = nil, nil // important to prevent double remove
