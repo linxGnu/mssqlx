@@ -10,9 +10,6 @@ import (
 )
 
 var (
-	// ErrNoRecord no record found
-	ErrNoRecord = sql.ErrNoRows
-
 	// ErrNetwork networking error
 	ErrNetwork = errors.New("Network error/Connection refused")
 
@@ -20,13 +17,17 @@ var (
 	ErrNoConnection = errors.New("No connection available")
 )
 
-func parseError(err error) error {
+func parseError(db *DB, err error) error {
+	if err == nil {
+		return nil
+	}
+
 	if _, ok := err.(net.Error); ok {
 		return ErrNetwork
 	}
 
-	if err == sql.ErrNoRows {
-		return ErrNoRecord
+	if db.Ping() != nil {
+		return ErrNetwork
 	}
 
 	return err
@@ -188,7 +189,7 @@ type dbBalancer struct {
 // init balancer and start health checkers
 func (c *dbBalancer) init(numHealthChecker int, numDbInstance int) {
 	if numHealthChecker <= 0 {
-		numHealthChecker = 1
+		numHealthChecker = 2 // at least two checkers
 	}
 
 	c.numberOfHealthChecker = numHealthChecker
@@ -244,7 +245,7 @@ func (c *dbBalancer) healthChecker() {
 		}
 
 		c.fail <- db
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
@@ -289,7 +290,7 @@ func (dbs *DBs) ProcessMasterErr(db DBNode, err error) {
 	switch db.(type) {
 	case *dbLinkListNode:
 		node := db.(*dbLinkListNode)
-		if err = parseError(err); err == ErrNetwork {
+		if err = parseError(node.db, err); err == ErrNetwork {
 			dbs.masters.failure(node)
 		}
 	default:
@@ -776,7 +777,7 @@ func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *Rows, 
 		}
 
 		r, e := db.db.NamedQuery(query, arg)
-		if e = parseError(e); e == ErrNetwork {
+		if e = parseError(db.db, e); e == ErrNetwork {
 			target.failure(db)
 			continue
 		}
@@ -821,7 +822,7 @@ func _namedExec(target *dbBalancer, query string, arg interface{}) (res sql.Resu
 		}
 
 		r, e := db.db.NamedExec(query, arg)
-		if e = parseError(e); e == ErrNetwork {
+		if e = parseError(db.db, e); e == ErrNetwork {
 			target.failure(db)
 			continue
 		}
@@ -866,7 +867,7 @@ func _query(target *dbBalancer, query string, args ...interface{}) (dbr *DB, res
 		}
 
 		r, e := db.db.Query(query, args...)
-		if e = parseError(e); e == ErrNetwork {
+		if e = parseError(db.db, e); e == ErrNetwork {
 			target.failure(db)
 			continue
 		}
@@ -1023,7 +1024,7 @@ func _exec(target *dbBalancer, query string, args ...interface{}) (res sql.Resul
 		}
 
 		r, e := db.db.Exec(query, args...)
-		if e = parseError(e); e == ErrNetwork {
+		if e = parseError(db.db, e); e == ErrNetwork {
 			target.failure(db)
 			continue
 		}
