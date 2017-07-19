@@ -85,15 +85,32 @@ func main() {
     // database drivers;  pq will exec them all, sqlite3 won't, ymmv
     db.GetMasterDB().MustExec(schema)
     
-    tx := db.GetMaster().GetDB().MustBegin()
-    tx.MustExec("INSERT INTO person (first_name, last_name, email) VALUES ($1, $2, $3)", "Jason", "Moiron", "jmoiron@jmoiron.net")
-    tx.MustExec("INSERT INTO person (first_name, last_name, email) VALUES ($1, $2, $3)", "John", "Doe", "johndoeDNE@gmail.net")
-    tx.MustExec("INSERT INTO place (country, city, telcode) VALUES ($1, $2, $3)", "United States", "New York", "1")
-    tx.MustExec("INSERT INTO place (country, telcode) VALUES ($1, $2)", "Hong Kong", "852")
-    tx.MustExec("INSERT INTO place (country, telcode) VALUES ($1, $2)", "Singapore", "65")
-    // Named queries can use structs, so if you have an existing struct (i.e. person := &Person{}) that you have populated, you can pass it in as &person
-    tx.NamedExec("INSERT INTO person (first_name, last_name, email) VALUES (:first_name, :last_name, :email)", &Person{"Jane", "Citizen", "jane.citzen@example.com"})
-    tx.Commit()
+    // Recommended write transaction this way
+    master, total := db.GetMaster()
+    if total > 0 && master != nil {
+	tx, e := master.GetDB().Begin()
+	if e != nil {
+		return e
+	}
+
+	shouldAutoRollBack := true
+	defer func() {
+		if e := recover(); e != nil {
+			err = fmt.Errorf("%v", e)
+			tx.Rollback()
+		} else if err != nil && shouldAutoRollBack {
+			tx.Rollback()
+		}
+	}()
+			
+	if _, err = tx.Exec(........); err != nil {
+		return
+	}
+			
+	if err = tx.Commit(); err != nil {
+		shouldAutoRollBack = false
+	}
+    }
 
     // Query all master and slave databases, storing results in a []Person (wrapped in []interface{})
     people := []Person{}
