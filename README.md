@@ -79,6 +79,18 @@ func main() {
         log.Fatalln(err)
     }
 
+    db.SetMaxIdleConns(20) // set max idle connections to all nodes
+    // db.SetMasterMaxIdleConns(20) // set max idle connections to master nodes
+    // db.SetSlaveMaxIdleConns(20) // set max idle connections to slave nodes
+
+    db.SetMaxOpenConns(50) // set max open connections to all nodes
+    // db.SetMasterMaxOpenConns(50) 
+    // db.SetSlaveMaxOpenConns(50)
+
+    db.SetHealthCheckPeriod(1000) // if nodes fail, checking healthy in a period (in milliseconds) for auto reconnect. Default is 500.
+    // db.SetMasterHealthCheckPeriod(1000)
+    // db.SetSlaveHealthCheckPeriod(1000)
+
     // Recommended write transaction this way
     master, total := db.GetMaster()
     if total > 0 && master != nil {

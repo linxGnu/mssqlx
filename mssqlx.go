@@ -17,6 +17,10 @@ var (
 	ErrNoConnection = errors.New("No connection available")
 )
 
+const (
+	DefaultHealthCheckPeriodInMilli = 500
+)
+
 func parseError(db *DB, err error) error {
 	if err == nil {
 		return nil
@@ -192,6 +196,8 @@ type dbBalancer struct {
 	dbs                   *dbLinkList
 	fail                  chan *DB
 	numberOfHealthChecker int
+	healthCheckPeriod     int64
+	healthCheckPeriodLock sync.RWMutex
 }
 
 // init balancer and start health checkers
@@ -203,6 +209,7 @@ func (c *dbBalancer) init(numHealthChecker int, numDbInstance int) {
 	c.numberOfHealthChecker = numHealthChecker
 	c.dbs = &dbLinkList{}
 	c.fail = make(chan *DB, numDbInstance)
+	c.healthCheckPeriod = DefaultHealthCheckPeriodInMilli
 
 	for i := 0; i < numHealthChecker; i++ {
 		go c.healthChecker()
@@ -235,6 +242,16 @@ func (c *dbBalancer) failure(node *dbLinkListNode) {
 	}
 }
 
+// setHealthCheckPeriod in miliseconds
+func (c *dbBalancer) setHealthCheckPeriod(period uint64) {
+	c.healthCheckPeriodLock.Lock()
+	defer c.healthCheckPeriodLock.Unlock()
+
+	if c.healthCheckPeriod = int64(period); c.healthCheckPeriod <= 0 {
+		c.healthCheckPeriod = DefaultHealthCheckPeriodInMilli
+	}
+}
+
 // healthChecker daemon to check health of db connection
 func (c *dbBalancer) healthChecker() {
 	defer func() {
@@ -242,6 +259,7 @@ func (c *dbBalancer) healthChecker() {
 		}
 	}()
 
+	var healthCheckPeriod int64
 	for db := range c.fail {
 		if db == nil {
 			continue
@@ -253,7 +271,12 @@ func (c *dbBalancer) healthChecker() {
 		}
 
 		c.fail <- db
-		time.Sleep(500 * time.Millisecond)
+
+		c.healthCheckPeriodLock.RLock()
+		healthCheckPeriod = c.healthCheckPeriod
+		c.healthCheckPeriodLock.RUnlock()
+
+		time.Sleep(time.Duration(healthCheckPeriod) * time.Millisecond)
 	}
 }
 
@@ -456,6 +479,44 @@ func _setMaxIdleConns(target []*DB, n int) {
 		}(db, &wg)
 	}
 	wg.Wait()
+}
+
+// SetHealthCheckPeriod sets the period (in millisecond) for checking health of failed nodes
+// for automatic recovery.
+//
+// Default is 500
+func (dbs *DBs) SetHealthCheckPeriod(period uint64) {
+	dbs.masterLock.Lock()
+	defer dbs.masterLock.Unlock()
+
+	dbs.masters.setHealthCheckPeriod(period)
+
+	dbs.slaveLock.Lock()
+	defer dbs.slaveLock.Unlock()
+
+	dbs.slaves.setHealthCheckPeriod(period)
+}
+
+// SetMasterHealthCheckPeriod sets the period (in millisecond) for checking health of failed master nodes
+// for automatic recovery.
+//
+// Default is 500
+func (dbs *DBs) SetMasterHealthCheckPeriod(period uint64) {
+	dbs.masterLock.Lock()
+	defer dbs.masterLock.Unlock()
+
+	dbs.masters.setHealthCheckPeriod(period)
+}
+
+// SetSlaveHealthCheckPeriod sets the period (in millisecond) for checking health of failed slave nodes
+// for automatic recovery.
+//
+// Default is 500
+func (dbs *DBs) SetSlaveHealthCheckPeriod(period uint64) {
+	dbs.slaveLock.Lock()
+	defer dbs.slaveLock.Unlock()
+
+	dbs.slaves.setHealthCheckPeriod(period)
 }
 
 // SetMaxIdleConns sets the maximum number of connections in the idle
