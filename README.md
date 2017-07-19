@@ -9,13 +9,11 @@ Major concepts are:
 * Try to keep 100% API compatible to slqx. All additional layers/codes are within mssqlx.go file. All other files belongs to sqlx. My work is only on mssqlx.go.
 * Provide HA solution for select-query. 
 * Simple and lightweight round-robin balancer with auto health checking, distributes workloads across slaves. When one downs, mssqlx moves its client to "failure-zone", avoids querying over this client. As the slave ups again, mssqlx puts (automatically) the client back for upcoming queries.
-* Reduce role of master to delete, insert, update only since all select-queries are on slaves.
+* Modify data query (INSERT/DELETE/UPDATE) should be done on only one master for various reason but automatically switch to other if this master fails.
 
 Notices:
-
-* Obviously, you must call delete, insert, update query on master. 
+* Obviously, you should call delete, insert, update query on master. 
 * APIs supports executing query on Master-only or Slave-only (or boths). Function name for querying on Master-only has suffix "OnMaster", querying on Slaves-only has suffix "OnSlave".
-* It's recommended to add at least two TCP-Balancers like Nginx or HAProxy before your slaves for HA and let mssqlx connect to those balancers. When one balancer down (rare but possible), mssqlx switches flow to others.
 
 ## install
 
@@ -81,10 +79,6 @@ func main() {
         log.Fatalln(err)
     }
 
-    // exec the schema or fail; multi-statement Exec behavior varies between
-    // database drivers;  pq will exec them all, sqlite3 won't, ymmv
-    db.GetMasterDB().MustExec(schema)
-    
     // Recommended write transaction this way
     master, total := db.GetMaster()
     if total > 0 && master != nil {
