@@ -58,7 +58,7 @@ type dbLinkList struct {
 	head *dbLinkListNode
 	tail *dbLinkListNode
 
-	// size of this linked list
+	// size of this linked-list
 	size int
 
 	// current point on linked-list
@@ -1128,9 +1128,9 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 		all:        &dbBalancer{},
 		_all:       make([]*DB, nMaster+nSlave),
 	}
-	dbs.masters.init(nMaster<<2/10, nMaster)       // 40%
-	dbs.slaves.init(nSlave<<2/10, nSlave)          // 40%
-	dbs.all.init((nMaster+nSlave)<<2/10, 1+nSlave) // 40%
+	dbs.masters.init(nMaster<<2/10, nMaster)             // 40%
+	dbs.slaves.init(nSlave<<2/10, nSlave)                // 40%
+	dbs.all.init((nMaster+nSlave)<<2/10, nMaster+nSlave) // 40%
 
 	// channel to sync routines
 	c := make(chan byte, len(errResult))
