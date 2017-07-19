@@ -270,13 +270,12 @@ func (c *dbBalancer) healthChecker() {
 			continue
 		}
 
-		c.fail <- db
-
 		c.healthCheckPeriodLock.RLock()
 		healthCheckPeriod = c.healthCheckPeriod
 		c.healthCheckPeriodLock.RUnlock()
-
 		time.Sleep(time.Duration(healthCheckPeriod) * time.Millisecond)
+
+		c.fail <- db
 	}
 }
 
@@ -1129,9 +1128,9 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 		all:        &dbBalancer{},
 		_all:       make([]*DB, nMaster+nSlave),
 	}
-	dbs.masters.init((nMaster<<1)/10, nMaster) // 20%
-	dbs.slaves.init((nSlave<<1)/10, nSlave)    // 20%
-	dbs.all.init((1+nSlave)<<1/10, 1+nSlave)   // 20%
+	dbs.masters.init(nMaster<<2/10, nMaster)       // 40%
+	dbs.slaves.init(nSlave<<2/10, nSlave)          // 40%
+	dbs.all.init((nMaster+nSlave)<<2/10, 1+nSlave) // 40%
 
 	// channel to sync routines
 	c := make(chan byte, len(errResult))
