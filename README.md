@@ -1,4 +1,4 @@
-#mssqlx
+# mssqlx
 
 [![license](http://img.shields.io/badge/license-MIT-red.svg?style=flat)](https://raw.githubusercontent.com/jmoiron/sqlx/master/LICENSE)
 
@@ -70,7 +70,7 @@ type Place struct {
 }
 
 func main() {
-    masterDSN := "user=foo dbname=bar sslmode=disable"
+    masterDSN := []string{"user=foo dbname=bar sslmode=disable"}
     slaveDSNs := []string{"user=readonly dbname=bar sslmode=disable"}
 
     db, err := mssqlx.ConnectMasterSlaves("postgres", masterDSN, slaveDSNs)
