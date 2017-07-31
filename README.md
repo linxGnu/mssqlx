@@ -6,7 +6,7 @@ mssqlx is capable of doing queries to master-slave (or master-master) database s
 
 Major concepts are:
 
-* Try to keep 100% API compatible to slqx. All additional layers/codes are within mssqlx.go file. All other files belongs to sqlx. My work is only on mssqlx.go.
+* Try to keep 100% API compatible to sqlx. All additional layers/codes are within mssqlx.go file. All other files belongs to sqlx. My work is only on mssqlx.go.
 * Provide HA solution for select-query. 
 * Simple and lightweight round-robin balancer with auto health checking, distributes workloads across slaves. When one downs, mssqlx moves its client to "failure-zone", avoids querying over this client. As the slave ups again, mssqlx puts (automatically) the client back for upcoming queries.
 * Modify data query (INSERT/DELETE/UPDATE) should be done on only one master for various reason but automatically switch to other if this master fails.
@@ -30,8 +30,7 @@ package main
 import (
     "database/sql"
 	
-	_ "github.com/lib/pq"
-
+    _ "github.com/lib/pq"
     "github.com/linxGnu/mssqlx/types"
     "github.com/linxGnu/mssqlx"
 
