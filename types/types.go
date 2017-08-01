@@ -10,6 +10,12 @@ import (
 	"io/ioutil"
 )
 
+// WsrepVariable ...
+type WsrepVariable struct {
+	Variable_name string `db:"Variable_name"`
+	Value         string `db:"Value"`
+}
+
 // GzippedText is a []byte which transparently gzips data being submitted to
 // a database and ungzips data being Scanned from a database.
 type GzippedText []byte

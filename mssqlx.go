@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/linxGnu/mssqlx/types"
 )
 
 var (
@@ -15,6 +18,9 @@ var (
 
 	// ErrNoConnection there is no connection to db
 	ErrNoConnection = errors.New("No connection available")
+
+	// ErrNoConnectionOrWsrep there is no connection to db or Wsrep is not ready
+	ErrNoConnectionOrWsrep = errors.New("No connection available or Wsrep is not ready")
 )
 
 const (
@@ -195,13 +201,15 @@ func (c *dbLinkList) clear() {
 type dbBalancer struct {
 	dbs                   *dbLinkList
 	fail                  chan *DB
+	isWsrep               bool
+	_name                 string
 	numberOfHealthChecker int
 	healthCheckPeriod     int64
 	healthCheckPeriodLock sync.RWMutex
 }
 
 // init balancer and start health checkers
-func (c *dbBalancer) init(numHealthChecker int, numDbInstance int) {
+func (c *dbBalancer) init(numHealthChecker int, numDbInstance int, isWsrep bool) {
 	if numHealthChecker <= 0 {
 		numHealthChecker = 2 // at least two checkers
 	}
@@ -210,6 +218,7 @@ func (c *dbBalancer) init(numHealthChecker int, numDbInstance int) {
 	c.dbs = &dbLinkList{}
 	c.fail = make(chan *DB, numDbInstance)
 	c.healthCheckPeriod = DefaultHealthCheckPeriodInMilli
+	c.isWsrep = isWsrep
 
 	for i := 0; i < numHealthChecker; i++ {
 		go c.healthChecker()
@@ -252,6 +261,24 @@ func (c *dbBalancer) setHealthCheckPeriod(period uint64) {
 	}
 }
 
+// checkWsrepReady ...
+func (c *dbBalancer) checkWsrepReady(db *DB) bool {
+	var tmp types.WsrepVariable
+	if err := db.Get(&tmp, "SHOW VARIABLES LIKE 'wsrep_on'"); err != nil {
+		return false
+	}
+
+	if tmp.Value != "ON" {
+		return true
+	}
+
+	if err := db.Get(&tmp, "SHOW STATUS LIKE 'wsrep_ready'"); err != nil || tmp.Value != "ON" {
+		return false
+	}
+
+	return true
+}
+
 // healthChecker daemon to check health of db connection
 func (c *dbBalancer) healthChecker() {
 	defer func() {
@@ -266,8 +293,10 @@ func (c *dbBalancer) healthChecker() {
 		}
 
 		if err := db.Ping(); err == nil {
-			c.dbs.add(&dbLinkListNode{db: db})
-			continue
+			if !c.isWsrep || c.checkWsrepReady(db) { // check wresp
+				c.dbs.add(&dbLinkListNode{db: db})
+				continue
+			}
 		}
 
 		c.healthCheckPeriodLock.RLock()
@@ -833,9 +862,14 @@ func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *Rows, 
 		return nil, ErrNoConnection
 	}
 
+	var db *dbLinkListNode
 	for {
-		db := target.get(true)
+		db = target.get(true)
 		if db == nil {
+			if target.isWsrep {
+				return nil, ErrNoConnectionOrWsrep
+			}
+
 			return nil, ErrNoConnection
 		}
 
@@ -846,6 +880,11 @@ func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *Rows, 
 
 		r, e := db.db.NamedQuery(query, arg)
 		if e = parseError(db.db, e); e == ErrNetwork {
+			target.failure(db)
+			continue
+		}
+
+		if e != nil && target.isWsrep && (strings.HasPrefix(e.Error(), "ERROR 1047") || strings.HasPrefix(e.Error(), "Error 1047")) { // for galera cluster
 			target.failure(db)
 			continue
 		}
@@ -878,9 +917,14 @@ func _namedExec(target *dbBalancer, query string, arg interface{}) (res sql.Resu
 		return nil, ErrNoConnection
 	}
 
+	var db *dbLinkListNode
 	for {
-		db := target.get(false)
+		db = target.get(false)
 		if db == nil {
+			if target.isWsrep {
+				return nil, ErrNoConnectionOrWsrep
+			}
+
 			return nil, ErrNoConnection
 		}
 
@@ -891,6 +935,11 @@ func _namedExec(target *dbBalancer, query string, arg interface{}) (res sql.Resu
 
 		r, e := db.db.NamedExec(query, arg)
 		if e = parseError(db.db, e); e == ErrNetwork {
+			target.failure(db)
+			continue
+		}
+
+		if e != nil && target.isWsrep && (strings.HasPrefix(e.Error(), "ERROR 1047") || strings.HasPrefix(e.Error(), "Error 1047")) { // for galera cluster
 			target.failure(db)
 			continue
 		}
@@ -923,9 +972,14 @@ func _query(target *dbBalancer, query string, args ...interface{}) (dbr *DB, res
 		return nil, nil, ErrNoConnection
 	}
 
+	var db *dbLinkListNode
 	for {
-		db := target.get(true)
+		db = target.get(true)
 		if db == nil {
+			if target.isWsrep {
+				return nil, nil, ErrNoConnectionOrWsrep
+			}
+
 			return nil, nil, ErrNoConnection
 		}
 
@@ -936,6 +990,11 @@ func _query(target *dbBalancer, query string, args ...interface{}) (dbr *DB, res
 
 		r, e := db.db.Query(query, args...)
 		if e = parseError(db.db, e); e == ErrNetwork {
+			target.failure(db)
+			continue
+		}
+
+		if e != nil && target.isWsrep && (strings.HasPrefix(e.Error(), "ERROR 1047") || strings.HasPrefix(e.Error(), "Error 1047")) { // for galera cluster
 			target.failure(db)
 			continue
 		}
@@ -1080,9 +1139,14 @@ func _exec(target *dbBalancer, query string, args ...interface{}) (res sql.Resul
 		return nil, ErrNoConnection
 	}
 
+	var db *dbLinkListNode
 	for {
-		db := target.get(false)
+		db = target.get(false)
 		if db == nil {
+			if target.isWsrep {
+				return nil, ErrNoConnectionOrWsrep
+			}
+
 			return nil, ErrNoConnection
 		}
 
@@ -1097,6 +1161,11 @@ func _exec(target *dbBalancer, query string, args ...interface{}) (res sql.Resul
 			continue
 		}
 
+		if e != nil && target.isWsrep && (strings.HasPrefix(e.Error(), "ERROR 1047") || strings.HasPrefix(e.Error(), "Error 1047")) { // for galera cluster
+			target.failure(db)
+			continue
+		}
+
 		return r, e
 	}
 }
@@ -1105,7 +1174,7 @@ func _exec(target *dbBalancer, query string, args ...interface{}) (res sql.Resul
 //
 // masterDSNs: data source names of Masters
 // slaveDSNs: data source names of Slaves
-func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []string) (*DBs, []error) {
+func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []string, args ...interface{}) (*DBs, []error) {
 	// Validate slave address
 	if slaveDSNs == nil {
 		slaveDSNs = []string{}
@@ -1128,9 +1197,23 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 		all:        &dbBalancer{},
 		_all:       make([]*DB, nMaster+nSlave),
 	}
-	dbs.masters.init(nMaster<<2/10, nMaster)             // 40%
-	dbs.slaves.init(nSlave<<2/10, nSlave)                // 40%
-	dbs.all.init((nMaster+nSlave)<<2/10, nMaster+nSlave) // 40%
+
+	isWsrep := false
+	if len(args) > 0 {
+		switch args[0].(type) {
+		case bool:
+			isWsrep = args[0].(bool)
+		}
+	}
+
+	dbs.masters.init(nMaster<<2/10, nMaster, isWsrep) // 40%
+	dbs.masters._name = "masters"
+
+	dbs.slaves.init(nSlave<<2/10, nSlave, isWsrep) // 40%
+	dbs.slaves._name = "slaves"
+
+	dbs.all.init((nMaster+nSlave)<<2/10, nMaster+nSlave, isWsrep) // 40%
+	dbs.all._name = "all"
 
 	// channel to sync routines
 	c := make(chan byte, len(errResult))

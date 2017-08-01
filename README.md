@@ -30,7 +30,7 @@ package main
 import (
     "database/sql"
 	
-    _ "github.com/lib/pq"
+    _ "github.com/go-sql-driver/mysql"
     "github.com/linxGnu/mssqlx/types"
     "github.com/linxGnu/mssqlx"
 
@@ -70,13 +70,13 @@ type Place struct {
 }
 
 func main() {
-    masterDSN := []string{"user=foo dbname=bar sslmode=disable"}
-    slaveDSNs := []string{"user=readonly dbname=bar sslmode=disable"}
+    dsn := "root:123@(%s:3306)/test?charset=utf8&collation=utf8_general_ci&parseTime=true"
 
-    db, err := mssqlx.ConnectMasterSlaves("postgres", masterDSN, slaveDSNs)
-    if err != nil {
-        log.Fatalln(err)
-    }
+	masterDSNs := []string{fmt.Sprintf(dsn, "172.31.25.233"), fmt.Sprintf(dsn, "172.31.25.234"), fmt.Sprintf(dsn, "172.31.25.235")}
+	slaveDSNs := []string{fmt.Sprintf(dsn, "172.31.25.233"), fmt.Sprintf(dsn, "172.31.25.234"), fmt.Sprintf(dsn, "172.31.25.235")}
+
+    db, _ := mssqlx.ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs)
+    // db, _ := mssqlx.ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs, true) -- indicates Galera/Wsrep Replication
 
     db.SetMaxIdleConns(20) // set max idle connections to all nodes
     // db.SetMasterMaxIdleConns(20) // set max idle connections to master nodes
