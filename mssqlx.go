@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net"
 	"strings"
 	"sync"
 	"time"
@@ -32,12 +31,10 @@ func parseError(db *DB, err error) error {
 		return nil
 	}
 
-	if _, ok := err.(net.Error); ok {
-		return ErrNetwork
-	}
-
-	if _, err := db.Exec("SELECT 1"); err != nil {
-		return ErrNetwork
+	if db != nil {
+		if _, er := db.Exec("SELECT 1"); er != nil {
+			return ErrNetwork
+		}
 	}
 
 	return err
@@ -194,7 +191,7 @@ func (c *dbLinkList) clear() {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
-	c.head, c.tail, c.current = nil, nil, nil
+	c.head, c.tail, c.current, c.size = nil, nil, nil, 0
 }
 
 // dbBalancer database balancer and health checker.
@@ -288,10 +285,6 @@ func (c *dbBalancer) healthChecker() {
 
 	var healthCheckPeriod int64
 	for db := range c.fail {
-		if db == nil {
-			continue
-		}
-
 		if err := db.Ping(); err == nil {
 			if !c.isWsrep || c.checkWsrepReady(db) { // check wresp
 				c.dbs.add(&dbLinkListNode{db: db})
@@ -342,19 +335,6 @@ func (dbs *DBs) DriverName() string {
 // GetMaster get master database instance from balancer
 func (dbs *DBs) GetMaster() (DBNode, int) {
 	return dbs.masters.get(false), len(dbs._masters)
-}
-
-// ProcessMasterErr process master error
-func (dbs *DBs) ProcessMasterErr(db DBNode, err error) {
-	switch db.(type) {
-	case *dbLinkListNode:
-		node := db.(*dbLinkListNode)
-		if err = parseError(node.db, err); err == ErrNetwork {
-			dbs.masters.failure(node)
-		}
-	default:
-		return
-	}
 }
 
 // GetAllSlaves get all slave database instances
