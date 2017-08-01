@@ -38,11 +38,10 @@ func StressTest(t *testing.T) {
 		mydsn += "?parseTime=true"
 	}
 
-	ds, driver := "", ""
+	dsn, driver := "", ""
 
 	if TestPostgres {
 		dsn, driver = pgdsn, "postgres"
-
 	}
 	if TestMysql {
 		dsn, driver = mydsn, "mysql"
