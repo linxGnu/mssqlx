@@ -1170,11 +1170,11 @@ func _exec(target *dbBalancer, query string, args ...interface{}) (res sql.Resul
 	}
 }
 
-// ConnectMasterSlaves to master-slave databases and verify with pings
-// driverName: mysql, postgres, etc
-// masterDSNs: data source names of Masters
-// slaveDSNs: data source names of Slaves
-// args: args[0] = true to indicates galera/wsrep cluster
+// ConnectMasterSlaves to master-slave databases and verify with pings.
+// driverName: mysql, postgres, etc.
+// masterDSNs: data source names of Masters.
+// slaveDSNs: data source names of Slaves.
+// args: args[0] = true to indicates galera/wsrep cluster.
 func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []string, args ...interface{}) (*DBs, []error) {
 	// Validate slave address
 	if slaveDSNs == nil {
