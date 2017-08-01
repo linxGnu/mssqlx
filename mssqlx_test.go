@@ -22,7 +22,6 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
-	"github.com/linxGnu/mssqlx"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -59,7 +58,7 @@ func StressTest(t *testing.T) {
 	masterDSNs := []string{dsn, dsn, dsn}
 	slaveDSNs := []string{dsn, dsn}
 
-	dbs, _ := mssqlx.ConnectMasterSlaves(driver, masterDSNs, slaveDSNs)
+	dbs, _ := ConnectMasterSlaves(driver, masterDSNs, slaveDSNs)
 
 	for ti := 0; ti <= 100; ti++ {
 		var wg sync.WaitGroup
