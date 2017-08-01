@@ -72,8 +72,8 @@ type Place struct {
 func main() {
     dsn := "root:123@(%s:3306)/test?charset=utf8&collation=utf8_general_ci&parseTime=true"
 
-	masterDSNs := []string{fmt.Sprintf(dsn, "172.31.25.233"), fmt.Sprintf(dsn, "172.31.25.234"), fmt.Sprintf(dsn, "172.31.25.235")}
-	slaveDSNs := []string{fmt.Sprintf(dsn, "172.31.25.233"), fmt.Sprintf(dsn, "172.31.25.234"), fmt.Sprintf(dsn, "172.31.25.235")}
+    masterDSNs := []string{fmt.Sprintf(dsn, "172.31.25.233"), fmt.Sprintf(dsn, "172.31.25.234"), fmt.Sprintf(dsn, "172.31.25.235")}
+    slaveDSNs := []string{fmt.Sprintf(dsn, "172.31.25.233"), fmt.Sprintf(dsn, "172.31.25.234"), fmt.Sprintf(dsn, "172.31.25.235")}
 
     db, _ := mssqlx.ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs)
     // db, _ := mssqlx.ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs, true) -- indicates Galera/Wsrep Replication
