@@ -4,16 +4,18 @@
 
 mssqlx is capable of doing queries to master-slave (or master-master) database structure, provides very similar APIs compared to sqlx.
 
-Major concepts are:
+Features and concepts are:
 
-* Try to keep 100% API compatible to sqlx. All additional layers/codes are within mssqlx.go file. All other files belongs to sqlx. My work is only on mssqlx.go.
-* Provide HA solution for select-query. 
-* Simple and lightweight round-robin balancer with auto health checking, distributes workloads across slaves. When one downs, mssqlx moves its client to "failure-zone", avoids querying over this client. As the slave ups again, mssqlx puts (automatically) the client back for upcoming queries.
-* Modify data query (INSERT/DELETE/UPDATE) should be done on only one master for various reason but automatically switch to other if this master fails.
+* API compatible to sqlx. All additional layers/codes are within mssqlx.go file. All other files belongs to sqlx. My work is only on mssqlx.go.
+* Auto and lightweight round-robin balancer of `select/show queries` on slaves. 
+* `update/delete/insert queries` are executed on a chosen master at a time.
+* Auto error handling on master (Wsrep/Galera). If chosen master failed (wsrep not ready, master down, etc), `update/delete/insert queries` would be switched to other master. This new chosen master is used for further data modification query.
+* Auto health checking master/slaves. When one downs, mssqlx moves its client to `failure-zone`, avoids querying over this client. As the master/slave ups again, mssqlx puts automatically the client back for upcoming queries.
 
 Notices:
-* Obviously, you should call delete, insert, update query on master. 
-* APIs supports executing query on Master-only or Slave-only (or boths). Function name for querying on Master-only has suffix "OnMaster", querying on Slaves-only has suffix "OnSlave".
+* APIs supports executing query on Master-only or Slave-only (or boths). Function name for querying on Master-only has suffix `OnMaster`, querying on Slaves-only has suffix `OnSlave`.
+* Default `select/show queries` are on Slaves.
+* Default `update/delete/insert queries` are on Masters.
 
 ## install
 
@@ -192,4 +194,3 @@ func main() {
     rows, err = db.NamedQuery(`SELECT * FROM person WHERE first_name=:first_name`, jason)
 }
 ```
-
