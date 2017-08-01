@@ -261,7 +261,7 @@ func (c *dbBalancer) setHealthCheckPeriod(period uint64) {
 	}
 }
 
-// checkWsrepReady ...
+// checkWsrepReady check if wsrep is in ready state
 func (c *dbBalancer) checkWsrepReady(db *DB) bool {
 	var tmp types.WsrepVariable
 	if err := db.Get(&tmp, "SHOW VARIABLES LIKE 'wsrep_on'"); err != nil {
@@ -344,7 +344,7 @@ func (dbs *DBs) GetMaster() (DBNode, int) {
 	return dbs.masters.get(false), len(dbs._masters)
 }
 
-// ProcessMasterErr ...
+// ProcessMasterErr process master error
 func (dbs *DBs) ProcessMasterErr(db DBNode, err error) {
 	switch db.(type) {
 	case *dbLinkListNode:
@@ -1171,9 +1171,10 @@ func _exec(target *dbBalancer, query string, args ...interface{}) (res sql.Resul
 }
 
 // ConnectMasterSlaves to master-slave databases and verify with pings
-//
+// driverName: mysql, postgres, etc
 // masterDSNs: data source names of Masters
 // slaveDSNs: data source names of Slaves
+// args: args[0] = true to indicates galera/wsrep cluster
 func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []string, args ...interface{}) (*DBs, []error) {
 	// Validate slave address
 	if slaveDSNs == nil {
