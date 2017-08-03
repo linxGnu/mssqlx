@@ -137,6 +137,7 @@ func main() {
     // You can also get a single result, a la QueryRow
     jason = Person{}
     err = db.Get(&jason, "SELECT * FROM person WHERE first_name=$1", "Jason")
+    // or without naming: db.Get(&jason, "SELECT * FROM person WHERE first_name = ?", "Jason")
     // or get from slaves only: db.GetOnSlave(&people, "SELECT * FROM person ORDER BY first_name ASC")
     // or get from master only: db.GetOnMaster(&people, "SELECT * FROM person ORDER BY first_name ASC")
 
