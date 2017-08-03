@@ -1,0 +1,28 @@
+language: go
+
+go:
+- 1.7
+- master
+
+services:
+- mysql
+- sqlite3
+
+addons:
+  postgresql: "9.6"
+
+env:
+  global:
+  - MSSQLX_POSTGRES_DSN="user=test password=test dbname=test sslmode=disable"
+  - MSSQLX_MYSQL_DSN="test:test@tcp(127.0.0.1:3306)/test"
+
+before_script:
+- mysql -e "CREATE DATABASE test;"
+- mysql -u root -e "GRANT ALL ON test.* TO test@localhost IDENTIFIED BY 'test'"
+- psql -c "CREATE DATABASE test;" -U postgres
+- psql -c "CREATE USER "test" WITH SUPERUSER PASSWORD 'test';" -U postgres
+- go get github.com/lib/pq
+- go get github.com/mattn/go-sqlite3
+- go get github.com/go-sql-driver/mysql
+
+script: go test
