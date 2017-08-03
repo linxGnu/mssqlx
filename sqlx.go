@@ -12,7 +12,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/linxGnu/mssqlx/reflectx"
+	"github.com/jmoiron/sqlx"
+	"github.com/jmoiron/sqlx/reflectx"
 )
 
 // Although the NameMapper is convenient, in practice it should not
@@ -121,10 +122,12 @@ func isUnsafe(i interface{}) bool {
 		return v.unsafe
 	case *Rows:
 		return v.unsafe
-	case NamedStmt:
-		return v.Stmt.unsafe
-	case *NamedStmt:
-		return v.Stmt.unsafe
+	case sqlx.NamedStmt:
+		unsafe := reflect.ValueOf(v.Stmt).FieldByName("unsafe")
+		return unsafe.Bool()
+	case *sqlx.NamedStmt:
+		unsafe := reflect.ValueOf(v.Stmt).Elem().FieldByName("unsafe")
+		return unsafe.Bool()
 	case Stmt:
 		return v.unsafe
 	case *Stmt:
@@ -133,33 +136,22 @@ func isUnsafe(i interface{}) bool {
 		return v.unsafe
 	case *qStmt:
 		return v.unsafe
-	case DB:
-		return v.unsafe
-	case *DB:
-		return v.unsafe
-	case Tx:
-		return v.unsafe
-	case *Tx:
-		return v.unsafe
+	case sqlx.DB:
+		unsafe := reflect.ValueOf(v).FieldByName("unsafe")
+		return unsafe.Bool()
+	case *sqlx.DB:
+		unsafe := reflect.ValueOf(v).Elem().FieldByName("unsafe")
+		return unsafe.Bool()
+	case sqlx.Tx:
+		unsafe := reflect.ValueOf(v).FieldByName("unsafe")
+		return unsafe.Bool()
+	case *sqlx.Tx:
+		unsafe := reflect.ValueOf(v).Elem().FieldByName("unsafe")
+		return unsafe.Bool()
 	case sql.Rows, *sql.Rows:
 		return false
 	default:
 		return false
-	}
-}
-
-func mapperFor(i interface{}) *reflectx.Mapper {
-	switch i.(type) {
-	case DB:
-		return i.(DB).Mapper
-	case *DB:
-		return i.(*DB).Mapper
-	case Tx:
-		return i.(Tx).Mapper
-	case *Tx:
-		return i.(*Tx).Mapper
-	default:
-		return mapper()
 	}
 }
 
@@ -231,260 +223,6 @@ func (r *Row) Columns() ([]string, error) {
 // Err returns the error encountered while scanning.
 func (r *Row) Err() error {
 	return r.err
-}
-
-// DB is a wrapper around sql.DB which keeps track of the driverName upon Open,
-// used mostly to automatically bind named queries using the right bindvars.
-type DB struct {
-	*sql.DB
-	driverName string
-	unsafe     bool
-	Mapper     *reflectx.Mapper
-}
-
-// NewDb returns a new sqlx DB wrapper for a pre-existing *sql.DB.  The
-// driverName of the original database is required for named query support.
-func NewDb(db *sql.DB, driverName string) *DB {
-	return &DB{DB: db, driverName: driverName, Mapper: mapper()}
-}
-
-// DriverName returns the driverName passed to the Open function for this DB.
-func (db *DB) DriverName() string {
-	return db.driverName
-}
-
-// Open is the same as sql.Open, but returns an *sqlx.DB instead.
-func Open(driverName, dataSourceName string) (*DB, error) {
-	db, err := sql.Open(driverName, dataSourceName)
-	if err != nil {
-		return nil, err
-	}
-	return &DB{DB: db, driverName: driverName, Mapper: mapper()}, err
-}
-
-// MustOpen is the same as sql.Open, but returns an *sqlx.DB instead and panics on error.
-func MustOpen(driverName, dataSourceName string) *DB {
-	db, err := Open(driverName, dataSourceName)
-	if err != nil {
-		panic(err)
-	}
-	return db
-}
-
-// MapperFunc sets a new mapper for this db using the default sqlx struct tag
-// and the provided mapper function.
-func (db *DB) MapperFunc(mf func(string) string) {
-	db.Mapper = reflectx.NewMapperFunc("db", mf)
-}
-
-// Rebind transforms a query from QUESTION to the DB driver's bindvar type.
-func (db *DB) Rebind(query string) string {
-	return Rebind(BindType(db.driverName), query)
-}
-
-// Unsafe returns a version of DB which will silently succeed to scan when
-// columns in the SQL result have no fields in the destination struct.
-// sqlx.Stmt and sqlx.Tx which are created from this DB will inherit its
-// safety behavior.
-func (db *DB) Unsafe() *DB {
-	return &DB{DB: db.DB, driverName: db.driverName, unsafe: true, Mapper: db.Mapper}
-}
-
-// BindNamed binds a query using the DB driver's bindvar type.
-func (db *DB) BindNamed(query string, arg interface{}) (string, []interface{}, error) {
-	return bindNamedMapper(BindType(db.driverName), query, arg, db.Mapper)
-}
-
-// NamedQuery using this DB.
-// Any named placeholder parameters are replaced with fields from arg.
-func (db *DB) NamedQuery(query string, arg interface{}) (*Rows, error) {
-	return NamedQuery(db, query, arg)
-}
-
-// NamedExec using this DB.
-// Any named placeholder parameters are replaced with fields from arg.
-func (db *DB) NamedExec(query string, arg interface{}) (sql.Result, error) {
-	return NamedExec(db, query, arg)
-}
-
-// Select using this DB.
-// Any placeholder parameters are replaced with supplied args.
-func (db *DB) Select(dest interface{}, query string, args ...interface{}) error {
-	return Select(db, dest, query, args...)
-}
-
-// Get using this DB.
-// Any placeholder parameters are replaced with supplied args.
-// An error is returned if the result set is empty.
-func (db *DB) Get(dest interface{}, query string, args ...interface{}) error {
-	return Get(db, dest, query, args...)
-}
-
-// MustBegin starts a transaction, and panics on error.  Returns an *sqlx.Tx instead
-// of an *sql.Tx.
-func (db *DB) MustBegin() *Tx {
-	tx, err := db.Beginx()
-	if err != nil {
-		panic(err)
-	}
-	return tx
-}
-
-// Beginx begins a transaction and returns an *sqlx.Tx instead of an *sql.Tx.
-func (db *DB) Beginx() (*Tx, error) {
-	tx, err := db.DB.Begin()
-	if err != nil {
-		return nil, err
-	}
-	return &Tx{Tx: tx, driverName: db.driverName, unsafe: db.unsafe, Mapper: db.Mapper}, err
-}
-
-// Queryx queries the database and returns an *sqlx.Rows.
-// Any placeholder parameters are replaced with supplied args.
-func (db *DB) Queryx(query string, args ...interface{}) (*Rows, error) {
-	r, err := db.DB.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	return &Rows{Rows: r, unsafe: db.unsafe, Mapper: db.Mapper}, err
-}
-
-// QueryRowx queries the database and returns an *sqlx.Row.
-// Any placeholder parameters are replaced with supplied args.
-func (db *DB) QueryRowx(query string, args ...interface{}) *Row {
-	rows, err := db.DB.Query(query, args...)
-	return &Row{rows: rows, err: err, unsafe: db.unsafe, Mapper: db.Mapper}
-}
-
-// MustExec (panic) runs MustExec using this database.
-// Any placeholder parameters are replaced with supplied args.
-func (db *DB) MustExec(query string, args ...interface{}) sql.Result {
-	return MustExec(db, query, args...)
-}
-
-// Preparex returns an sqlx.Stmt instead of a sql.Stmt
-func (db *DB) Preparex(query string) (*Stmt, error) {
-	return Preparex(db, query)
-}
-
-// PrepareNamed returns an sqlx.NamedStmt
-func (db *DB) PrepareNamed(query string) (*NamedStmt, error) {
-	return prepareNamed(db, query)
-}
-
-// Tx is an sqlx wrapper around sql.Tx with extra functionality
-type Tx struct {
-	*sql.Tx
-	driverName string
-	unsafe     bool
-	Mapper     *reflectx.Mapper
-}
-
-// DriverName returns the driverName used by the DB which began this transaction.
-func (tx *Tx) DriverName() string {
-	return tx.driverName
-}
-
-// Rebind a query within a transaction's bindvar type.
-func (tx *Tx) Rebind(query string) string {
-	return Rebind(BindType(tx.driverName), query)
-}
-
-// Unsafe returns a version of Tx which will silently succeed to scan when
-// columns in the SQL result have no fields in the destination struct.
-func (tx *Tx) Unsafe() *Tx {
-	return &Tx{Tx: tx.Tx, driverName: tx.driverName, unsafe: true, Mapper: tx.Mapper}
-}
-
-// BindNamed binds a query within a transaction's bindvar type.
-func (tx *Tx) BindNamed(query string, arg interface{}) (string, []interface{}, error) {
-	return bindNamedMapper(BindType(tx.driverName), query, arg, tx.Mapper)
-}
-
-// NamedQuery within a transaction.
-// Any named placeholder parameters are replaced with fields from arg.
-func (tx *Tx) NamedQuery(query string, arg interface{}) (*Rows, error) {
-	return NamedQuery(tx, query, arg)
-}
-
-// NamedExec a named query within a transaction.
-// Any named placeholder parameters are replaced with fields from arg.
-func (tx *Tx) NamedExec(query string, arg interface{}) (sql.Result, error) {
-	return NamedExec(tx, query, arg)
-}
-
-// Select within a transaction.
-// Any placeholder parameters are replaced with supplied args.
-func (tx *Tx) Select(dest interface{}, query string, args ...interface{}) error {
-	return Select(tx, dest, query, args...)
-}
-
-// Queryx within a transaction.
-// Any placeholder parameters are replaced with supplied args.
-func (tx *Tx) Queryx(query string, args ...interface{}) (*Rows, error) {
-	r, err := tx.Tx.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	return &Rows{Rows: r, unsafe: tx.unsafe, Mapper: tx.Mapper}, err
-}
-
-// QueryRowx within a transaction.
-// Any placeholder parameters are replaced with supplied args.
-func (tx *Tx) QueryRowx(query string, args ...interface{}) *Row {
-	rows, err := tx.Tx.Query(query, args...)
-	return &Row{rows: rows, err: err, unsafe: tx.unsafe, Mapper: tx.Mapper}
-}
-
-// Get within a transaction.
-// Any placeholder parameters are replaced with supplied args.
-// An error is returned if the result set is empty.
-func (tx *Tx) Get(dest interface{}, query string, args ...interface{}) error {
-	return Get(tx, dest, query, args...)
-}
-
-// MustExec runs MustExec within a transaction.
-// Any placeholder parameters are replaced with supplied args.
-func (tx *Tx) MustExec(query string, args ...interface{}) sql.Result {
-	return MustExec(tx, query, args...)
-}
-
-// Preparex  a statement within a transaction.
-func (tx *Tx) Preparex(query string) (*Stmt, error) {
-	return Preparex(tx, query)
-}
-
-// Stmtx returns a version of the prepared statement which runs within a transaction.  Provided
-// stmt can be either *sql.Stmt or *sqlx.Stmt.
-func (tx *Tx) Stmtx(stmt interface{}) *Stmt {
-	var s *sql.Stmt
-	switch v := stmt.(type) {
-	case Stmt:
-		s = v.Stmt
-	case *Stmt:
-		s = v.Stmt
-	case sql.Stmt:
-		s = &v
-	case *sql.Stmt:
-		s = v
-	default:
-		panic(fmt.Sprintf("non-statement type %v passed to Stmtx", reflect.ValueOf(stmt).Type()))
-	}
-	return &Stmt{Stmt: tx.Stmt(s), Mapper: tx.Mapper}
-}
-
-// NamedStmt returns a version of the prepared statement which runs within a transaction.
-func (tx *Tx) NamedStmt(stmt *NamedStmt) *NamedStmt {
-	return &NamedStmt{
-		QueryString: stmt.QueryString,
-		Params:      stmt.Params,
-		Stmt:        tx.Stmtx(stmt.Stmt),
-	}
-}
-
-// PrepareNamed returns an sqlx.NamedStmt
-func (tx *Tx) PrepareNamed(query string) (*NamedStmt, error) {
-	return prepareNamed(tx, query)
 }
 
 // Stmt is an sqlx wrapper around sql.Stmt with extra functionality
@@ -621,34 +359,6 @@ func (r *Rows) StructScan(dest interface{}) error {
 		return err
 	}
 	return r.Err()
-}
-
-// Connect to a database and verify with a ping.
-func Connect(driverName, dataSourceName string) (*DB, error) {
-	db, err := Open(driverName, dataSourceName)
-	if err != nil {
-		return db, err
-	}
-	err = db.Ping()
-	return db, err
-}
-
-// MustConnect connects to a database and panics on error.
-func MustConnect(driverName, dataSourceName string) *DB {
-	db, err := Connect(driverName, dataSourceName)
-	if err != nil {
-		panic(err)
-	}
-	return db
-}
-
-// Preparex prepares a statement.
-func Preparex(p Preparer, query string) (*Stmt, error) {
-	s, err := p.Prepare(query)
-	if err != nil {
-		return nil, err
-	}
-	return &Stmt{Stmt: s, unsafe: isUnsafe(p), Mapper: mapperFor(p)}, err
 }
 
 // Select executes a query using the provided Queryer, and StructScans each row

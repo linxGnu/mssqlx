@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/linxGnu/mssqlx/types"
+	"github.com/jmoiron/sqlx"
 )
 
 var (
@@ -26,7 +26,7 @@ const (
 	DefaultHealthCheckPeriodInMilli = 500
 )
 
-func parseError(db *DB, err error) error {
+func parseError(db *sqlx.DB, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -42,16 +42,16 @@ func parseError(db *DB, err error) error {
 
 // dbLinkListNode a node of linked-list contains sqlx.DB
 type dbLinkListNode struct {
-	db   *DB
+	db   *sqlx.DB
 	next *dbLinkListNode
 	prev *dbLinkListNode
 }
 
 type DBNode interface {
-	GetDB() *DB
+	GetDB() *sqlx.DB
 }
 
-func (c *dbLinkListNode) GetDB() *DB {
+func (c *dbLinkListNode) GetDB() *sqlx.DB {
 	return c.db
 }
 
@@ -197,7 +197,7 @@ func (c *dbLinkList) clear() {
 // dbBalancer database balancer and health checker.
 type dbBalancer struct {
 	dbs                   *dbLinkList
-	fail                  chan *DB
+	fail                  chan *sqlx.DB
 	isWsrep               bool
 	_name                 string
 	numberOfHealthChecker int
@@ -213,7 +213,7 @@ func (c *dbBalancer) init(numHealthChecker int, numDbInstance int, isWsrep bool)
 
 	c.numberOfHealthChecker = numHealthChecker
 	c.dbs = &dbLinkList{}
-	c.fail = make(chan *DB, numDbInstance)
+	c.fail = make(chan *sqlx.DB, numDbInstance)
 	c.healthCheckPeriod = DefaultHealthCheckPeriodInMilli
 	c.isWsrep = isWsrep
 
@@ -223,7 +223,7 @@ func (c *dbBalancer) init(numHealthChecker int, numDbInstance int, isWsrep bool)
 }
 
 // add a db connection to handle in balancer
-func (c *dbBalancer) add(db *DB) {
+func (c *dbBalancer) add(db *sqlx.DB) {
 	c.dbs.add(&dbLinkListNode{db: db})
 }
 
@@ -258,9 +258,15 @@ func (c *dbBalancer) setHealthCheckPeriod(period uint64) {
 	}
 }
 
+// WsrepVariable ...
+type WsrepVariable struct {
+	Variable_name string `db:"Variable_name"`
+	Value         string `db:"Value"`
+}
+
 // checkWsrepReady check if wsrep is in ready state
-func (c *dbBalancer) checkWsrepReady(db *DB) bool {
-	var tmp types.WsrepVariable
+func (c *dbBalancer) checkWsrepReady(db *sqlx.DB) bool {
+	var tmp WsrepVariable
 	if err := db.Get(&tmp, "SHOW VARIABLES LIKE 'wsrep_on'"); err != nil {
 		return false
 	}
@@ -312,11 +318,11 @@ type DBs struct {
 
 	// master instances
 	masters  *dbBalancer
-	_masters []*DB
+	_masters []*sqlx.DB
 
 	// slaves instances
 	slaves  *dbBalancer
-	_slaves []*DB
+	_slaves []*sqlx.DB
 
 	// master and slave lock
 	masterLock sync.RWMutex
@@ -324,7 +330,7 @@ type DBs struct {
 
 	// store all database instances
 	all  *dbBalancer
-	_all []*DB
+	_all []*sqlx.DB
 }
 
 // DriverName returns the driverName passed to the Open function for this DB.
@@ -338,11 +344,11 @@ func (dbs *DBs) GetMaster() (DBNode, int) {
 }
 
 // GetAllSlaves get all slave database instances
-func (dbs *DBs) GetAllSlaves() ([]*DB, int) {
+func (dbs *DBs) GetAllSlaves() ([]*sqlx.DB, int) {
 	return dbs._slaves, len(dbs._slaves)
 }
 
-func _ping(target []*DB) []error {
+func _ping(target []*sqlx.DB) []error {
 	if target == nil {
 		return nil
 	}
@@ -384,7 +390,7 @@ func (dbs *DBs) PingSlave() []error {
 	return _ping(dbs._slaves)
 }
 
-func _close(target []*DB) []error {
+func _close(target []*sqlx.DB) []error {
 	if target == nil {
 		return nil
 	}
@@ -399,7 +405,7 @@ func _close(target []*DB) []error {
 	var wg sync.WaitGroup
 	for i, db := range target {
 		wg.Add(1)
-		go func(db *DB, ind int, wg *sync.WaitGroup) {
+		go func(db *sqlx.DB, ind int, wg *sync.WaitGroup) {
 			defer wg.Done()
 			if db != nil {
 				errResult[ind] = db.Close()
@@ -466,7 +472,7 @@ func (dbs *DBs) DestroySlave() []error {
 	return _close(dbs._slaves)
 }
 
-func _setMaxIdleConns(target []*DB, n int) {
+func _setMaxIdleConns(target []*sqlx.DB, n int) {
 	if target == nil {
 		return
 	}
@@ -479,7 +485,7 @@ func _setMaxIdleConns(target []*DB, n int) {
 	var wg sync.WaitGroup
 	for _, db := range target {
 		wg.Add(1)
-		go func(db *DB, wg *sync.WaitGroup) {
+		go func(db *sqlx.DB, wg *sync.WaitGroup) {
 			defer wg.Done()
 			if db != nil {
 				db.SetMaxIdleConns(n)
@@ -572,7 +578,7 @@ func (dbs *DBs) SetSlaveMaxIdleConns(n int) {
 	_setMaxIdleConns(dbs._slaves, n)
 }
 
-func _setMaxOpenConns(target []*DB, n int) {
+func _setMaxOpenConns(target []*sqlx.DB, n int) {
 	if target == nil {
 		return
 	}
@@ -585,7 +591,7 @@ func _setMaxOpenConns(target []*DB, n int) {
 	var wg sync.WaitGroup
 	for _, db := range target {
 		wg.Add(1)
-		go func(db *DB, wg *sync.WaitGroup) {
+		go func(db *sqlx.DB, wg *sync.WaitGroup) {
 			defer wg.Done()
 			if db != nil {
 				db.SetMaxOpenConns(n)
@@ -643,7 +649,7 @@ func (dbs *DBs) SetSlaveMaxOpenConns(n int) {
 	_setMaxOpenConns(dbs._slaves, n)
 }
 
-func _setConnMaxLifetime(target []*DB, d time.Duration) {
+func _setConnMaxLifetime(target []*sqlx.DB, d time.Duration) {
 	if target == nil {
 		return
 	}
@@ -656,7 +662,7 @@ func _setConnMaxLifetime(target []*DB, d time.Duration) {
 	var wg sync.WaitGroup
 	for _, db := range target {
 		wg.Add(1)
-		go func(db *DB, wg *sync.WaitGroup) {
+		go func(db *sqlx.DB, wg *sync.WaitGroup) {
 			defer wg.Done()
 			if db != nil {
 				db.SetConnMaxLifetime(d)
@@ -705,7 +711,7 @@ func (dbs *DBs) SetSlaveConnMaxLifetime(d time.Duration) {
 	_setConnMaxLifetime(dbs._slaves, d)
 }
 
-func _stats(target []*DB) []sql.DBStats {
+func _stats(target []*sqlx.DB) []sql.DBStats {
 	if target == nil {
 		return nil
 	}
@@ -720,7 +726,7 @@ func _stats(target []*DB) []sql.DBStats {
 	var wg sync.WaitGroup
 	for ind, db := range target {
 		wg.Add(1)
-		go func(db *DB, ind int, wg *sync.WaitGroup) {
+		go func(db *sqlx.DB, ind int, wg *sync.WaitGroup) {
 			defer wg.Done()
 			if db != nil {
 				result[ind] = db.Stats()
@@ -759,7 +765,7 @@ func (dbs *DBs) StatsSlave() []sql.DBStats {
 	return _stats(dbs._slaves)
 }
 
-func _mapperFunc(target []*DB, mf func(string) string) {
+func _mapperFunc(target []*sqlx.DB, mf func(string) string) {
 	if target == nil {
 		return
 	}
@@ -772,7 +778,7 @@ func _mapperFunc(target []*DB, mf func(string) string) {
 	var wg sync.WaitGroup
 	for ind, db := range target {
 		wg.Add(1)
-		go func(db *DB, ind int) {
+		go func(db *sqlx.DB, ind int) {
 			defer wg.Done()
 			if db != nil {
 				db.MapperFunc(mf)
@@ -830,7 +836,7 @@ func (dbs *DBs) BindNamed(query string, arg interface{}) (string, []interface{},
 	return "", nil, nil
 }
 
-func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *Rows, err error) {
+func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *sqlx.Rows, err error) {
 	defer func() {
 		if e := recover(); e != nil {
 			err = fmt.Errorf("%v", e)
@@ -875,13 +881,13 @@ func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *Rows, 
 
 // NamedQuery using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
-func (dbs *DBs) NamedQuery(query string, arg interface{}) (*Rows, error) {
+func (dbs *DBs) NamedQuery(query string, arg interface{}) (*sqlx.Rows, error) {
 	return _namedQuery(dbs.slaves, query, arg)
 }
 
 // NamedQueryOnMaster using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
-func (dbs *DBs) NamedQueryOnMaster(query string, arg interface{}) (*Rows, error) {
+func (dbs *DBs) NamedQueryOnMaster(query string, arg interface{}) (*sqlx.Rows, error) {
 	return _namedQuery(dbs.masters, query, arg)
 }
 
@@ -940,7 +946,7 @@ func (dbs *DBs) NamedExecOnSlave(query string, arg interface{}) (sql.Result, err
 	return _namedExec(dbs.slaves, query, arg)
 }
 
-func _query(target *dbBalancer, query string, args ...interface{}) (dbr *DB, res *sql.Rows, err error) {
+func _query(target *dbBalancer, query string, args ...interface{}) (dbr *sqlx.DB, res *sql.Rows, err error) {
 	defer func() {
 		if e := recover(); e != nil {
 			err = fmt.Errorf("%v", e)
@@ -988,21 +994,20 @@ func _queryx(target *dbBalancer, query string, args ...interface{}) (*Rows, erro
 	if err != nil {
 		return nil, err
 	}
-
 	if db == nil {
 		return &Rows{Rows: r}, err
 	}
 
-	return &Rows{Rows: r, unsafe: db.unsafe, Mapper: db.Mapper}, err
+	return &Rows{Rows: r, unsafe: isUnsafe(db), Mapper: db.Mapper}, err
 }
 
-// Queryx queries the database and returns an *Rows.
+// Queryx queries the database and returns an *sqlx.Rows.
 // Any placeholder parameters are replaced with supplied args.
 func (dbs *DBs) Queryx(query string, args ...interface{}) (*Rows, error) {
 	return _queryx(dbs.slaves, query, args...)
 }
 
-// QueryxOnMaster queries the database and returns an *Rows.
+// QueryxOnMaster queries the database and returns an *sqlx.Rows.
 // Any placeholder parameters are replaced with supplied args.
 func (dbs *DBs) QueryxOnMaster(query string, args ...interface{}) (*Rows, error) {
 	return _queryx(dbs.masters, query, args...)
@@ -1064,7 +1069,7 @@ func _queryRowx(target *dbBalancer, que string, args ...interface{}) *Row {
 		return &Row{rows: rows, err: err}
 	}
 
-	return &Row{rows: rows, err: err, unsafe: db.unsafe, Mapper: db.Mapper}
+	return &Row{rows: rows, err: err, unsafe: isUnsafe(db), Mapper: db.Mapper}
 }
 
 // QueryRowx queries the database and returns an *Row.
@@ -1172,11 +1177,11 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 	dbs := &DBs{
 		driverName: driverName,
 		masters:    &dbBalancer{},
-		_masters:   make([]*DB, nMaster),
+		_masters:   make([]*sqlx.DB, nMaster),
 		slaves:     &dbBalancer{},
-		_slaves:    make([]*DB, nSlave),
+		_slaves:    make([]*sqlx.DB, nSlave),
 		all:        &dbBalancer{},
-		_all:       make([]*DB, nMaster+nSlave),
+		_all:       make([]*sqlx.DB, nMaster+nSlave),
 	}
 
 	isWsrep := false
@@ -1203,7 +1208,7 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 	n := 0
 	for i := range masterDSNs {
 		go func(mId, eId int) {
-			dbs._masters[mId], errResult[eId] = Connect(driverName, masterDSNs[mId])
+			dbs._masters[mId], errResult[eId] = sqlx.Connect(driverName, masterDSNs[mId])
 			dbs.masters.add(dbs._masters[mId])
 
 			dbs._all[eId] = dbs._masters[mId]
@@ -1217,7 +1222,7 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 	// Concurrency connect to slaves
 	for i := range slaveDSNs {
 		go func(sId, eId int) {
-			dbs._slaves[sId], errResult[eId] = Connect(driverName, slaveDSNs[sId])
+			dbs._slaves[sId], errResult[eId] = sqlx.Connect(driverName, slaveDSNs[sId])
 			dbs.slaves.add(dbs._slaves[sId])
 
 			dbs._all[eId] = dbs._slaves[sId]

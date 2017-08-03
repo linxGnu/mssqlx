@@ -20,6 +20,7 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -86,6 +87,126 @@ func ConnectMasterSlave() {
 	}
 }
 
+type Schema struct {
+	create string
+	drop   string
+}
+
+func (s Schema) Postgres() (string, string) {
+	return s.create, s.drop
+}
+
+func (s Schema) MySQL() (string, string) {
+	return strings.Replace(s.create, `"`, "`", -1), s.drop
+}
+
+func (s Schema) Sqlite3() (string, string) {
+	return strings.Replace(s.create, `now()`, `CURRENT_TIMESTAMP`, -1), s.drop
+}
+
+var defaultSchema = Schema{
+	create: `
+CREATE TABLE person (
+	first_name text,
+	last_name text,
+	email text,
+	added_at timestamp default now()
+);
+CREATE TABLE place (
+	country text,
+	city text NULL,
+	telcode integer
+);
+CREATE TABLE capplace (
+	"COUNTRY" text,
+	"CITY" text NULL,
+	"TELCODE" integer
+);
+CREATE TABLE nullperson (
+    first_name text NULL,
+    last_name text NULL,
+    email text NULL
+);
+CREATE TABLE employees (
+	name text,
+	id integer,
+	boss_id integer
+);
+`,
+	drop: `
+drop table person;
+drop table place;
+drop table capplace;
+drop table nullperson;
+drop table employees;
+`,
+}
+
+type Person struct {
+	FirstName string `db:"first_name"`
+	LastName  string `db:"last_name"`
+	Email     string
+	AddedAt   time.Time `db:"added_at"`
+}
+
+type Person2 struct {
+	FirstName sql.NullString `db:"first_name"`
+	LastName  sql.NullString `db:"last_name"`
+	Email     sql.NullString
+}
+
+type Place struct {
+	Country string
+	City    sql.NullString
+	TelCode int
+}
+
+type PlacePtr struct {
+	Country string
+	City    *string
+	TelCode int
+}
+
+type PersonPlace struct {
+	Person
+	Place
+}
+
+type PersonPlacePtr struct {
+	*Person
+	*Place
+}
+
+type EmbedConflict struct {
+	FirstName string `db:"first_name"`
+	Person
+}
+
+type SliceMember struct {
+	Country   string
+	City      sql.NullString
+	TelCode   int
+	People    []Person `db:"-"`
+	Addresses []Place  `db:"-"`
+}
+
+func MultiExec(e Execer, query string) {
+	stmts := strings.Split(query, ";\n")
+	if len(strings.Trim(stmts[len(stmts)-1], " \n\t\r")) == 0 {
+		stmts = stmts[:len(stmts)-1]
+	}
+	for _, s := range stmts {
+		_, err := e.Exec(s)
+		if err != nil {
+			fmt.Println(err, s)
+		}
+	}
+}
+
+// Note that because of field map caching, we need a new type here
+// if we've used Place already somewhere in sqlx
+type CPlace Place
+
 func _RunWithSchema(schema Schema, t *testing.T, test func(db *DBs, t *testing.T)) {
 	runner := func(db *DBs, t *testing.T, create, drop string) {
 		defer func() {
@@ -142,7 +263,7 @@ func TestParseError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	db, _ := Open("postgres", "user=test dbname=test sslmode=disable")
+	db, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
 
 	errT = fmt.Errorf("abc")
 	if err = parseError(db, errT); err != ErrNetwork {
@@ -151,19 +272,19 @@ func TestParseError(t *testing.T) {
 }
 
 func TestDbLinkListNode(t *testing.T) {
-	db1, _ := Open("postgres", "user=test dbname=test sslmode=disable")
+	db1, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
 	llNode1 := &dbLinkListNode{db: db1}
 	if llNode1.GetDB() != db1 {
 		t.Fatal("dbLinkListNode is not set properly")
 	}
 
-	db2, _ := Open("postgres", "user=test dbname=test sslmode=disable")
+	db2, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
 	llNode2 := &dbLinkListNode{db: db2}
 
-	db3, _ := Open("postgres", "user=test dbname=test sslmode=disable")
+	db3, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
 	llNode3 := &dbLinkListNode{db: db3}
 
-	db4, _ := Open("postgres", "user=test dbname=test sslmode=disable")
+	db4, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
 	llNode4 := &dbLinkListNode{db: db4}
 
 	ll := dbLinkList{}
@@ -288,10 +409,10 @@ func TestDbBalancer(t *testing.T) {
 		t.Fatal("DbBalancer: setHealthCheckPeriod fail")
 	}
 
-	db1, _ := Open("postgres", "user=test dbname=test sslmode=disable")
-	db2, _ := Open("postgres", "user=test dbname=test sslmode=disable")
-	db3, _ := Open("postgres", "user=test dbname=test sslmode=disable")
-	db4, _ := Open("postgres", "user=test dbname=test sslmode=disable")
+	db1, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
+	db2, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
+	db3, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
+	db4, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
 
 	dbB.add(nil)
 	dbB.add(db1)
@@ -435,11 +556,11 @@ func TestConnectMasterSlave(t *testing.T) {
 	}
 }
 
-func Test_GlobalFunc(t *testing.T) {
-	db1, _ := Open("postgres", "user=test dbname=test sslmode=disable")
-	db2, _ := Open("postgres", "user=test dbname=test sslmode=disable")
-	db3, _ := Open("postgres", "user=test dbname=test sslmode=disable")
-	db4, _ := Open("postgres", "user=test dbname=test sslmode=disable")
+func TestGlobalFunc(t *testing.T) {
+	db1, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
+	db2, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
+	db3, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
+	db4, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
 
 	dbB := &dbBalancer{}
 	dbB.init(-1, 4, true)
@@ -525,50 +646,50 @@ func Test_GlobalFunc(t *testing.T) {
 	dbB.destroy()
 
 	// check mapper func to see panic occuring
-	_mapperFunc([]*DB{db1, db2}, nil)
+	_mapperFunc([]*sqlx.DB{db1, db2}, nil)
 
 	// check ping
 	if errs := _ping(nil); errs != nil {
 		t.Fatal("Ping fail")
 	}
-	if errs := _ping([]*DB{}); errs != nil {
+	if errs := _ping([]*sqlx.DB{}); errs != nil {
 		t.Fatal("Ping fail")
 	}
 
 	// check close
-	if errs := _close([]*DB{db1, db2}); errs == nil || len(errs) != 2 {
+	if errs := _close([]*sqlx.DB{db1, db2}); errs == nil || len(errs) != 2 {
 		t.Fatal("_close fail")
 	}
 	if errs := _close(nil); errs != nil {
 		t.Fatal("_close fail")
 	}
-	if errs := _close([]*DB{}); errs != nil {
+	if errs := _close([]*sqlx.DB{}); errs != nil {
 		t.Fatal("_close fail")
 	}
 
 	// check set max idle conns
-	_setMaxIdleConns([]*DB{}, 12)
+	_setMaxIdleConns([]*sqlx.DB{}, 12)
 	_setMaxIdleConns(nil, 12)
-	_setMaxIdleConns([]*DB{db3, db4}, 12)
+	_setMaxIdleConns([]*sqlx.DB{db3, db4}, 12)
 
 	// check set max conns
-	_setMaxOpenConns([]*DB{}, 16)
+	_setMaxOpenConns([]*sqlx.DB{}, 16)
 	_setMaxOpenConns(nil, 16)
-	_setMaxOpenConns([]*DB{db3, db4}, 16)
+	_setMaxOpenConns([]*sqlx.DB{db3, db4}, 16)
 
 	// check setConnMaxLifetime
-	_setConnMaxLifetime([]*DB{}, 16*time.Second)
+	_setConnMaxLifetime([]*sqlx.DB{}, 16*time.Second)
 	_setConnMaxLifetime(nil, 16*time.Second)
-	_setConnMaxLifetime([]*DB{db3, db4}, 16*time.Second)
+	_setConnMaxLifetime([]*sqlx.DB{db3, db4}, 16*time.Second)
 
 	// check stats
 	if stats := _stats(nil); stats != nil {
 		t.Fatal("_stats fail")
 	}
-	if stats := _stats([]*DB{}); stats != nil {
+	if stats := _stats([]*sqlx.DB{}); stats != nil {
 		t.Fatal("_stats fail")
 	}
-	if stats := _stats([]*DB{db1, db2, db3, db4}); stats == nil || len(stats) != 4 {
+	if stats := _stats([]*sqlx.DB{db1, db2, db3, db4}); stats == nil || len(stats) != 4 {
 		t.Fatal("_stats fail")
 	}
 }
@@ -1204,14 +1325,14 @@ func TestUsages(t *testing.T) {
 
 		// ensure that if the named param happens right at the end it still works
 		// ensure that NamedQuery works with a map[string]interface{}
-		rows, err = db.NamedQuery("SELECT * FROM person WHERE first_name=:first", map[string]interface{}{"first": "Bin"})
+		_rows, err := db.NamedQuery("SELECT * FROM person WHERE first_name=:first", map[string]interface{}{"first": "Bin"})
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		ben := &Person{}
-		for rows.Next() {
-			err = rows.StructScan(ben)
+		for _rows.Next() {
+			err = _rows.StructScan(ben)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1234,12 +1355,12 @@ func TestUsages(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		rows, err = db.NamedQuery("SELECT * FROM person WHERE first_name=:first_name", ben)
+		_rows, err = db.NamedQuery("SELECT * FROM person WHERE first_name=:first_name", ben)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for rows.Next() {
-			err = rows.StructScan(ben)
+		for _rows.Next() {
+			err = _rows.StructScan(ben)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1340,228 +1461,6 @@ func TestUsages(t *testing.T) {
 			}
 		}
 	})
-}
-
-func Test_EmbeddedMaps(t *testing.T) {
-	var schema = Schema{
-		create: `
-			CREATE TABLE message (
-				string text,
-				properties text
-			);`,
-		drop: `drop table message;`,
-	}
-
-	_RunWithSchema(schema, t, func(db *DBs, t *testing.T) {
-		messages := []Message{
-			{"Hello, World", PropertyMap{"one": "1", "two": "2"}},
-			{"Thanks, Joy", PropertyMap{"pull": "request"}},
-		}
-		q1 := `INSERT INTO message (string, properties) VALUES (:string, :properties);`
-		for _, m := range messages {
-			_, err := db.NamedExec(q1, m)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-		var count int
-		err := db.Get(&count, "SELECT count(*) FROM message")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if count != len(messages) {
-			t.Fatalf("Expected %d messages in DB, found %d", len(messages), count)
-		}
-
-		var m Message
-		err = db.Get(&m, "SELECT * FROM message LIMIT 1;")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if m.Properties == nil {
-			t.Fatal("Expected m.Properties to not be nil, but it was.")
-		}
-	})
-}
-
-func Test_In(t *testing.T) {
-	// some quite normal situations
-	type tr struct {
-		q    string
-		args []interface{}
-		c    int
-	}
-	tests := []tr{
-		{"SELECT * FROM foo WHERE x = ? AND v in (?) AND y = ?",
-			[]interface{}{"foo", []int{0, 5, 7, 2, 9}, "bar"},
-			7},
-		{"SELECT * FROM foo WHERE x in (?)",
-			[]interface{}{[]int{1, 2, 3, 4, 5, 6, 7, 8}},
-			8},
-	}
-	for _, test := range tests {
-		q, a, err := In(test.q, test.args...)
-		if err != nil {
-			t.Error(err)
-		}
-		if len(a) != test.c {
-			t.Errorf("Expected %d args, but got %d (%+v)", test.c, len(a), a)
-		}
-		if strings.Count(q, "?") != test.c {
-			t.Errorf("Expected %d bindVars, got %d", test.c, strings.Count(q, "?"))
-		}
-	}
-
-	// too many bindVars, but no slices, so short circuits parsing
-	// i'm not sure if this is the right behavior;  this query/arg combo
-	// might not work, but we shouldn't parse if we don't need to
-	{
-		orig := "SELECT * FROM foo WHERE x = ? AND y = ?"
-		q, a, err := In(orig, "foo", "bar", "baz")
-		if err != nil {
-			t.Error(err)
-		}
-		if len(a) != 3 {
-			t.Errorf("Expected 3 args, but got %d (%+v)", len(a), a)
-		}
-		if q != orig {
-			t.Error("Expected unchanged query.")
-		}
-	}
-
-	tests = []tr{
-		// too many bindvars;  slice present so should return error during parse
-		{"SELECT * FROM foo WHERE x = ? and y = ?",
-			[]interface{}{"foo", []int{1, 2, 3}, "bar"},
-			0},
-		// empty slice, should return error before parse
-		{"SELECT * FROM foo WHERE x = ?",
-			[]interface{}{[]int{}},
-			0},
-		// too *few* bindvars, should return an error
-		{"SELECT * FROM foo WHERE x = ? AND y in (?)",
-			[]interface{}{[]int{1, 2, 3}},
-			0},
-	}
-	for _, test := range tests {
-		_, _, err := In(test.q, test.args...)
-		if err == nil {
-			t.Error("Expected an error, but got nil.")
-		}
-	}
-	_RunWithSchema(defaultSchema, t, func(db *DBs, t *testing.T) {
-		_loadDefaultFixture(db, t)
-		//tx.MustExec(tx.Rebind("INSERT INTO place (country, city, telcode) VALUES (?, ?, ?)"), "United States", "New York", "1")
-		//tx.MustExec(tx.Rebind("INSERT INTO place (country, telcode) VALUES (?, ?)"), "Hong Kong", "852")
-		//tx.MustExec(tx.Rebind("INSERT INTO place (country, telcode) VALUES (?, ?)"), "Singapore", "65")
-		telcodes := []int{852, 65}
-		q := "SELECT * FROM place WHERE telcode IN(?) ORDER BY telcode"
-		query, args, err := In(q, telcodes)
-		if err != nil {
-			t.Error(err)
-		}
-		query = db.Rebind(query)
-		places := []Place{}
-		err = db.Select(&places, query, args...)
-		if err != nil {
-			t.Error(err)
-		}
-		if len(places) != 2 {
-			t.Fatalf("Expecting 2 results, got %d", len(places))
-		}
-		if places[0].TelCode != 65 {
-			t.Errorf("Expecting singapore first, but got %#v", places[0])
-		}
-		if places[1].TelCode != 852 {
-			t.Errorf("Expecting hong kong second, but got %#v", places[1])
-		}
-	})
-}
-
-func Test_BindStruct(t *testing.T) {
-	var err error
-
-	q1 := `INSERT INTO foo (a, b, c, d) VALUES (:name, :age, :first, :last)`
-
-	type tt struct {
-		Name  string
-		Age   int
-		First string
-		Last  string
-	}
-
-	type tt2 struct {
-		Field1 string `db:"field_1"`
-		Field2 string `db:"field_2"`
-	}
-
-	type tt3 struct {
-		tt2
-		Name string
-	}
-
-	am := tt{"Jason Moiron", 30, "Jason", "Moiron"}
-
-	bq, args, _ := bindStruct(QUESTION, q1, am, mapper())
-	expect := `INSERT INTO foo (a, b, c, d) VALUES (?, ?, ?, ?)`
-	if bq != expect {
-		t.Errorf("Interpolation of query failed: got `%v`, expected `%v`\n", bq, expect)
-	}
-
-	if args[0].(string) != "Jason Moiron" {
-		t.Errorf("Expected `Jason Moiron`, got %v\n", args[0])
-	}
-
-	if args[1].(int) != 30 {
-		t.Errorf("Expected 30, got %v\n", args[1])
-	}
-
-	if args[2].(string) != "Jason" {
-		t.Errorf("Expected Jason, got %v\n", args[2])
-	}
-
-	if args[3].(string) != "Moiron" {
-		t.Errorf("Expected Moiron, got %v\n", args[3])
-	}
-
-	am2 := tt2{"Hello", "World"}
-	bq, args, _ = bindStruct(QUESTION, "INSERT INTO foo (a, b) VALUES (:field_2, :field_1)", am2, mapper())
-	expect = `INSERT INTO foo (a, b) VALUES (?, ?)`
-	if bq != expect {
-		t.Errorf("Interpolation of query failed: got `%v`, expected `%v`\n", bq, expect)
-	}
-
-	if args[0].(string) != "World" {
-		t.Errorf("Expected 'World', got %s\n", args[0].(string))
-	}
-	if args[1].(string) != "Hello" {
-		t.Errorf("Expected 'Hello', got %s\n", args[1].(string))
-	}
-
-	am3 := tt3{Name: "Hello!"}
-	am3.Field1 = "Hello"
-	am3.Field2 = "World"
-
-	bq, args, err = bindStruct(QUESTION, "INSERT INTO foo (a, b, c) VALUES (:name, :field_1, :field_2)", am3, mapper())
-
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expect = `INSERT INTO foo (a, b, c) VALUES (?, ?, ?)`
-	if bq != expect {
-		t.Errorf("Interpolation of query failed: got `%v`, expected `%v`\n", bq, expect)
-	}
-
-	if args[0].(string) != "Hello!" {
-		t.Errorf("Expected 'Hello!', got %s\n", args[0].(string))
-	}
-	if args[1].(string) != "Hello" {
-		t.Errorf("Expected 'Hello', got %s\n", args[1].(string))
-	}
-	if args[2].(string) != "World" {
-		t.Errorf("Expected 'World', got %s\n", args[0].(string))
-	}
 }
 
 func Test_EmbeddedLiterals(t *testing.T) {
