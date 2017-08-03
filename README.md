@@ -1,6 +1,6 @@
 # mssqlx
 
-[![license](http://img.shields.io/badge/license-MIT-red.svg?style=flat)](https://raw.githubusercontent.com/jmoiron/sqlx/master/LICENSE)
+[![Build Status](https://travis-ci.org/linxGnu/mssqlx.svg?branch=master)](https://travis-ci.org/linxGnu/mssqlx)[![Go Report Card](https://goreportcard.com/badge/github.com/linxGnu/mssqlx)](https://goreportcard.com/report/github.com/linxGnu/mssqlx)[![godoc v1](https://img.shields.io/badge/docs-GoDoc-red.svg)](https://godoc.org/github.com/linxGnu/mssqlx)[![license](http://img.shields.io/badge/license-MIT-red.svg?style=flat)](https://raw.githubusercontent.com/jmoiron/sqlx/master/LICENSE)
 
 mssqlx is capable of doing queries to master-slave (or master-master) database structure, provides very similar APIs compared to sqlx.
 
