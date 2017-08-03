@@ -2,9 +2,9 @@
 
 // The following environment variables, if set, will be used:
 //
-//	* MSSQLX_POSTGRES_DSN
-//	* MSSQLX_MYSQL_DSN
-//	* MSSQLX_SQLITE_DSN
+//	* SQLX_SQLITE_DSN
+//	* SQLX_POSTGRES_DSN
+//	* SQLX_MYSQL_DSN
 //
 // Set any of these variables to 'skip' to skip them.  Note that for MySQL,
 // the string '?parseTime=True' will be appended to the DSN if it's not there
@@ -27,22 +27,20 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-var TestWPostgres = false // test with postgres?
-var TestWSqlite = false   // test with sqlite?
-var TestWMysql = false    // test with mysql?
+var TestWPostgres = true // test with postgres?
+var TestWSqlite = true   // test with sqlite?
+var TestWMysql = true    // test with mysql?
 
-var myDBs *DBs
-var pgDBs *DBs
-var sqDBs *DBs
+var dbs *DBs
 
 func init() {
 	ConnectMasterSlave()
 }
 
 func ConnectMasterSlave() {
-	pgdsn := os.Getenv("MSSQLX_POSTGRES_DSN")
-	mydsn := os.Getenv("MSSQLX_MYSQL_DSN")
-	sqdsn := os.Getenv("MSSQLX_SQLITE_DSN")
+	pgdsn := os.Getenv("SQLX_POSTGRES_DSN")
+	mydsn := os.Getenv("SQLX_MYSQL_DSN")
+	sqdsn := os.Getenv("SQLX_SQLITE_DSN")
 
 	TestWPostgres = pgdsn != "skip" && pgdsn != ""
 	TestWMysql = mydsn != "skip" && mydsn != ""
@@ -51,6 +49,25 @@ func ConnectMasterSlave() {
 	if !strings.Contains(mydsn, "parseTime=true") {
 		mydsn += "?parseTime=true"
 	}
+
+	dsn, driver := "", ""
+
+	if TestWPostgres {
+		dsn, driver = pgdsn, "postgres"
+	}
+	if TestWMysql {
+		dsn, driver = mydsn, "mysql"
+	}
+	if TestWSqlite {
+		dsn, driver = sqdsn, "sqlite3"
+	}
+
+	if dsn == "" {
+		return
+	}
+
+	masterDSNs := []string{dsn, dsn, dsn}
+	slaveDSNs := []string{dsn, dsn}
 
 	if !TestWPostgres {
 		fmt.Println("Disabling Postgres tests.")
@@ -64,28 +81,8 @@ func ConnectMasterSlave() {
 		fmt.Println("Disabling SQLite tests.")
 	}
 
-	if TestWPostgres {
-		masterDSNs := []string{pgdsn, pgdsn}
-		slaveDSNs := []string{pgdsn, pgdsn}
-		pgDBs, _ = ConnectMasterSlaves("postgres", masterDSNs, slaveDSNs)
-		pgDBs.SetMaxIdleConns(5)
-		pgDBs.SetMaxOpenConns(10)
-	}
-
-	if TestWMysql {
-		masterDSNs := []string{mydsn, mydsn}
-		slaveDSNs := []string{mydsn, mydsn}
-		myDBs, _ = ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs)
-		myDBs.SetMaxIdleConns(5)
-		myDBs.SetMaxOpenConns(10)
-	}
-
-	if TestWSqlite {
-		masterDSNs := []string{sqdsn, sqdsn}
-		slaveDSNs := []string{sqdsn, sqdsn}
-		sqDBs, _ = ConnectMasterSlaves("sqlite3", masterDSNs, slaveDSNs)
-		sqDBs.SetMaxIdleConns(5)
-		sqDBs.SetMaxOpenConns(10)
+	if TestWPostgres || TestWMysql || TestWSqlite {
+		dbs, _ = ConnectMasterSlaves(driver, masterDSNs, slaveDSNs)
 	}
 }
 
@@ -101,20 +98,20 @@ func _RunWithSchema(schema Schema, t *testing.T, test func(db *DBs, t *testing.T
 
 	if TestWPostgres {
 		create, drop := schema.Postgres()
-		runner(pgDBs, t, create, drop)
+		runner(dbs, t, create, drop)
 	}
 	if TestWSqlite {
 		create, drop := schema.Sqlite3()
-		runner(sqDBs, t, create, drop)
+		runner(dbs, t, create, drop)
 	}
 	if TestWMysql {
 		create, drop := schema.MySQL()
-		runner(myDBs, t, create, drop)
+		runner(dbs, t, create, drop)
 	}
 }
 
 func _loadDefaultFixture(db *DBs, t *testing.T) {
-	master, num := db.GetMaster()
+	master, num := dbs.GetMaster()
 	if num > 0 {
 		tx := master.GetDB().MustBegin()
 		tx.MustExec(tx.Rebind("INSERT INTO person (first_name, last_name, email) VALUES (?, ?, ?)"), "Jason", "Moiron", "jmoiron@jmoiron.net")
@@ -145,7 +142,7 @@ func TestParseError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	db, _ := Open("postgres", "user=test dbname=test sslmode=disable")
+	db, _ := Open("postgres", "user=foo dbname=bar sslmode=disable")
 
 	errT = fmt.Errorf("abc")
 	if err = parseError(db, errT); err != ErrNetwork {
@@ -154,19 +151,19 @@ func TestParseError(t *testing.T) {
 }
 
 func TestDbLinkListNode(t *testing.T) {
-	db1, _ := Open("postgres", "user=test dbname=test sslmode=disable")
+	db1, _ := Open("postgres", "user=foo dbname=bar sslmode=disable")
 	llNode1 := &dbLinkListNode{db: db1}
 	if llNode1.GetDB() != db1 {
 		t.Fatal("dbLinkListNode is not set properly")
 	}
 
-	db2, _ := Open("postgres", "user=test dbname=test sslmode=disable")
+	db2, _ := Open("postgres", "user=foo dbname=bar sslmode=disable")
 	llNode2 := &dbLinkListNode{db: db2}
 
-	db3, _ := Open("postgres", "user=test dbname=test sslmode=disable")
+	db3, _ := Open("postgres", "user=foo dbname=bar sslmode=disable")
 	llNode3 := &dbLinkListNode{db: db3}
 
-	db4, _ := Open("postgres", "user=test dbname=test sslmode=disable")
+	db4, _ := Open("postgres", "user=foo dbname=bar sslmode=disable")
 	llNode4 := &dbLinkListNode{db: db4}
 
 	ll := dbLinkList{}
@@ -291,10 +288,10 @@ func TestDbBalancer(t *testing.T) {
 		t.Fatal("DbBalancer: setHealthCheckPeriod fail")
 	}
 
-	db1, _ := Open("postgres", "user=test dbname=test sslmode=disable")
-	db2, _ := Open("postgres", "user=test dbname=test sslmode=disable")
-	db3, _ := Open("postgres", "user=test dbname=test sslmode=disable")
-	db4, _ := Open("postgres", "user=test dbname=test sslmode=disable")
+	db1, _ := Open("postgres", "user=foo dbname=bar sslmode=disable")
+	db2, _ := Open("postgres", "user=foo dbname=bar sslmode=disable")
+	db3, _ := Open("postgres", "user=foo dbname=bar sslmode=disable")
+	db4, _ := Open("postgres", "user=foo dbname=bar sslmode=disable")
 
 	dbB.add(nil)
 	dbB.add(db1)
@@ -335,7 +332,7 @@ func TestDbBalancer(t *testing.T) {
 }
 
 func TestConnectMasterSlave(t *testing.T) {
-	dsn, driver := "user=test dbname=test sslmode=disable", "postgres"
+	dsn, driver := "user=foo dbname=bar sslmode=disable", "postgres"
 
 	masterDSNs := []string{dsn, dsn, dsn}
 	slaveDSNs := []string{dsn, dsn}
@@ -452,10 +449,10 @@ func TestConnectMasterSlave(t *testing.T) {
 }
 
 func Test_GlobalFunc(t *testing.T) {
-	db1, _ := Open("postgres", "user=test dbname=test sslmode=disable")
-	db2, _ := Open("postgres", "user=test dbname=test sslmode=disable")
-	db3, _ := Open("postgres", "user=test dbname=test sslmode=disable")
-	db4, _ := Open("postgres", "user=test dbname=test sslmode=disable")
+	db1, _ := Open("postgres", "user=foo dbname=bar sslmode=disable")
+	db2, _ := Open("postgres", "user=foo dbname=bar sslmode=disable")
+	db3, _ := Open("postgres", "user=foo dbname=bar sslmode=disable")
+	db4, _ := Open("postgres", "user=foo dbname=bar sslmode=disable")
 
 	dbB := &dbBalancer{}
 	dbB.init(-1, 4, true)
