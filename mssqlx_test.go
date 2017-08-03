@@ -263,7 +263,7 @@ func TestParseError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	db, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
+	db, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
 
 	errT = fmt.Errorf("abc")
 	if err = parseError(db, errT); err != ErrNetwork {
@@ -272,19 +272,19 @@ func TestParseError(t *testing.T) {
 }
 
 func TestDbLinkListNode(t *testing.T) {
-	db1, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
+	db1, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
 	llNode1 := &dbLinkListNode{db: db1}
 	if llNode1.GetDB() != db1 {
 		t.Fatal("dbLinkListNode is not set properly")
 	}
 
-	db2, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
+	db2, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
 	llNode2 := &dbLinkListNode{db: db2}
 
-	db3, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
+	db3, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
 	llNode3 := &dbLinkListNode{db: db3}
 
-	db4, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
+	db4, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
 	llNode4 := &dbLinkListNode{db: db4}
 
 	ll := dbLinkList{}
@@ -409,10 +409,10 @@ func TestDbBalancer(t *testing.T) {
 		t.Fatal("DbBalancer: setHealthCheckPeriod fail")
 	}
 
-	db1, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
-	db2, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
-	db3, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
-	db4, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
+	db1, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
+	db2, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
+	db3, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
+	db4, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
 
 	dbB.add(nil)
 	dbB.add(db1)
@@ -452,7 +452,7 @@ func TestDbBalancer(t *testing.T) {
 }
 
 func TestConnectMasterSlave(t *testing.T) {
-	dsn, driver := "user=test dbname=test sslmode=disable", "postgres"
+	dsn, driver := "user=test1 dbname=test1 sslmode=disable", "postgres"
 
 	masterDSNs := []string{dsn, dsn, dsn}
 	slaveDSNs := []string{dsn, dsn}
@@ -557,10 +557,10 @@ func TestConnectMasterSlave(t *testing.T) {
 }
 
 func TestGlobalFunc(t *testing.T) {
-	db1, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
-	db2, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
-	db3, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
-	db4, _ := sqlx.Open("postgres", "user=test dbname=test sslmode=disable")
+	db1, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
+	db2, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
+	db3, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
+	db4, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
 
 	dbB := &dbBalancer{}
 	dbB.init(-1, 4, true)
