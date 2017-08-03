@@ -14,7 +14,7 @@ addons:
 env:
   global:
   - MSSQLX_POSTGRES_DSN="user=test password=test dbname=test sslmode=disable"
-  - MSSQLX_MYSQL_DSN="test:test@tcp(127.0.0.1:3306)/test"
+  - MSSQLX_MYSQL_DSN="test:test@tcp(localhost:3306)/test"
 
 before_script:
 - mysql -e "CREATE DATABASE test;"

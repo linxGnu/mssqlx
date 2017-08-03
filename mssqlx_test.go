@@ -1,5 +1,3 @@
-// +build go1.8
-
 // The following environment variables, if set, will be used:
 //
 //	* MSSQLX_POSTGRES_DSN
@@ -14,7 +12,6 @@ package mssqlx
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -615,27 +612,6 @@ func TestMissingName(t *testing.T) {
 			t.Error("Expected missing name in StructScan to fail, but it did not.")
 		}
 		rows.Close()
-
-		// test Get
-		pp = PersonPlus{}
-		err = db.Get(&pp, "SELECT * FROM person LIMIT 1")
-		if err != nil {
-			t.Error(err)
-		}
-
-		// test naked StructScan
-		pps = []PersonPlus{}
-		rowsx, err := db.Queryx("SELECT * FROM person LIMIT 1")
-		if err != nil {
-			t.Fatal(err)
-		}
-		rowsx.Next()
-		err = StructScan(rowsx, &pps)
-		if err != nil {
-			t.Error(err)
-		}
-		rowsx.Close()
-
 	})
 }
 
@@ -922,63 +898,6 @@ func TestNamedQueries(t *testing.T) {
 			LastName  sql.NullString `json:"last_name"`
 			Email     sql.NullString
 		}
-
-		jp := JSONPerson{
-			FirstName: sql.NullString{String: "ben", Valid: true},
-			LastName:  sql.NullString{String: "smith", Valid: true},
-			Email:     sql.NullString{String: "ben@smith.com", Valid: true},
-		}
-
-		// prepare queries for case sensitivity to test our ToUpper function.
-		// postgres and sqlite accept "", but mysql uses ``;  since Go's multi-line
-		// strings are `` we use "" by default and swap out for MySQL
-		pdb := func(s string, db *DBs) string {
-			if db.DriverName() == "mysql" {
-				return strings.Replace(s, `"`, "`", -1)
-			}
-			return s
-		}
-
-		q1 = `INSERT INTO jsperson ("FIRST", last_name, "EMAIL") VALUES (:FIRST, :last_name, :EMAIL)`
-		_, err = db.NamedExec(pdb(q1, db), jp)
-		if err != nil {
-			t.Fatal(err, db.DriverName())
-		}
-
-		// Checks that a person pulled out of the db matches the one we put in
-		check := func(t *testing.T, rows *Rows) {
-			jp = JSONPerson{}
-			for rows.Next() {
-				err = rows.StructScan(&jp)
-				if err != nil {
-					t.Error(err)
-				}
-				if jp.FirstName.String != "ben" {
-					t.Errorf("Expected first name of `ben`, got `%s` (%s) ", jp.FirstName.String, db.DriverName())
-				}
-				if jp.LastName.String != "smith" {
-					t.Errorf("Expected LastName of `smith`, got `%s` (%s)", jp.LastName.String, db.DriverName())
-				}
-				if jp.Email.String != "ben@smith.com" {
-					t.Errorf("Expected first name of `doe`, got `%s` (%s)", jp.Email.String, db.DriverName())
-				}
-			}
-		}
-
-		// Check exactly the same thing, but with db.NamedQuery, which does not go
-		// through the PrepareNamed/NamedStmt path.
-		rows, err = db.NamedQuery(pdb(`
-			SELECT * FROM jsperson
-			WHERE
-				"FIRST"=:FIRST AND
-				last_name=:last_name AND
-				"EMAIL"=:EMAIL
-		`, db), jp)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		check(t, rows)
 
 		// Test nested structs
 		type Place struct {
@@ -1462,47 +1381,6 @@ func Test_EmbeddedMaps(t *testing.T) {
 		if m.Properties == nil {
 			t.Fatal("Expected m.Properties to not be nil, but it was.")
 		}
-	})
-}
-
-func Test_Issue197(t *testing.T) {
-	// this test actually tests for a bug in database/sql:
-	//   https://github.com/golang/go/issues/13905
-	// this potentially makes _any_ named type that is an alias for []byte
-	// unsafe to use in a lot of different ways (basically, unsafe to hold
-	// onto after loading from the database).
-	t.Skip()
-
-	type mybyte []byte
-	type Var struct{ Raw json.RawMessage }
-	type Var2 struct{ Raw []byte }
-	type Var3 struct{ Raw mybyte }
-	_RunWithSchema(defaultSchema, t, func(db *DBs, t *testing.T) {
-		var err error
-		var v, q Var
-		if err = db.Get(&v, `SELECT '{"a": "b"}' AS raw`); err != nil {
-			t.Fatal(err)
-		}
-		if err = db.Get(&q, `SELECT 'null' AS raw`); err != nil {
-			t.Fatal(err)
-		}
-
-		var v2, q2 Var2
-		if err = db.Get(&v2, `SELECT '{"a": "b"}' AS raw`); err != nil {
-			t.Fatal(err)
-		}
-		if err = db.Get(&q2, `SELECT 'null' AS raw`); err != nil {
-			t.Fatal(err)
-		}
-
-		var v3, q3 Var3
-		if err = db.QueryRow(`SELECT '{"a": "b"}' AS raw`).Scan(&v3.Raw); err != nil {
-			t.Fatal(err)
-		}
-		if err = db.QueryRow(`SELECT '{"c": "d"}' AS raw`).Scan(&q3.Raw); err != nil {
-			t.Fatal(err)
-		}
-		t.Fail()
 	})
 }
 
