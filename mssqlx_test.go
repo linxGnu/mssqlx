@@ -329,7 +329,6 @@ func TestDbBalancer(t *testing.T) {
 
 	dbB.destroy()
 	if dbB.dbs.size != 0 {
-		fmt.Println(dbB.dbs.size)
 		t.Fatal("DbBalancer: destroy fail")
 	}
 }
@@ -388,18 +387,12 @@ func TestConnectMasterSlave(t *testing.T) {
 	// get stats
 	if stats := db.Stats(); stats == nil || len(stats) != 5 {
 		t.Fatal("Stats fail")
-	} else {
-		fmt.Println(stats)
 	}
 	if stats := db.StatsMaster(); stats == nil || len(stats) != 3 {
 		t.Fatal("StatsMaster fail")
-	} else {
-		fmt.Println(stats)
 	}
 	if stats := db.StatsSlave(); stats == nil || len(stats) != 2 {
 		t.Fatal("StatsSlave fail")
-	} else {
-		fmt.Println(stats)
 	}
 
 	if slaves, c := db.GetAllSlaves(); c != 2 {
@@ -416,13 +409,9 @@ func TestConnectMasterSlave(t *testing.T) {
 	// test destroy master / slave
 	if errs := db.DestroyMaster(); errs == nil || len(errs) != 3 {
 		t.Fatal("DestroyMaster fail")
-	} else {
-		fmt.Println(errs)
 	}
 	if errs := db.DestroySlave(); errs == nil || len(errs) != 2 {
 		t.Fatal("DestroySlave fail")
-	} else {
-		fmt.Println(errs)
 	}
 
 	db, _ = ConnectMasterSlaves(driver, masterDSNs, slaveDSNs, true)
@@ -436,8 +425,6 @@ func TestConnectMasterSlave(t *testing.T) {
 	// test destroy all
 	if errs := db.Destroy(); errs == nil || len(errs) != 5 {
 		t.Fatal("Destroy fail")
-	} else {
-		fmt.Println(errs)
 	}
 
 	db, _ = ConnectMasterSlaves(driver, nil, slaveDSNs, true)
@@ -554,8 +541,6 @@ func Test_GlobalFunc(t *testing.T) {
 	// check close
 	if errs := _close([]*DB{db1, db2}); errs == nil || len(errs) != 2 {
 		t.Fatal("_close fail")
-	} else {
-		fmt.Println(errs)
 	}
 	if errs := _close(nil); errs != nil {
 		t.Fatal("_close fail")
@@ -588,8 +573,6 @@ func Test_GlobalFunc(t *testing.T) {
 	}
 	if stats := _stats([]*DB{db1, db2, db3, db4}); stats == nil || len(stats) != 4 {
 		t.Fatal("_stats fail")
-	} else {
-		fmt.Println(stats)
 	}
 }
 
