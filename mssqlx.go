@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -900,6 +901,11 @@ func (dbs *DBs) BindNamed(query string, arg interface{}) (string, []interface{},
 	return "", nil, nil
 }
 
+func isErrBadConn(err error) bool {
+	return err == driver.ErrBadConn || // Postgres/Mysql Driver returns default driver.ErrBadConn
+		err == mysql.ErrInvalidConn // fix for Mysql Driver ("github.com/go-sql-driver/mysql")
+}
+
 func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *sqlx.Rows, err error) {
 	defer func() {
 		if e := recover(); e != nil {
@@ -935,7 +941,7 @@ func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *sqlx.R
 		// check driver.ErrBadConn occuring when a connection idle for a long time.
 		// this prevents returning driver.ErrBadConn to application
 		countBadConnErr = 0
-		for err == driver.ErrBadConn {
+		for isErrBadConn(err) {
 			target.retryQueryLock.RLock()
 			if countBadConnErr < target.retryQueryTime {
 				time.Sleep(time.Duration(target.retryQueryPeriod) * time.Millisecond)
@@ -1067,7 +1073,7 @@ func _query(target *dbBalancer, query string, args ...interface{}) (dbr *sqlx.DB
 		// check driver.ErrBadConn occuring when a connection idle for a long time.
 		// this prevents returning driver.ErrBadConn to application
 		countBadConnErr = 0
-		for err == driver.ErrBadConn {
+		for isErrBadConn(err) {
 			target.retryQueryLock.RLock()
 			if countBadConnErr < target.retryQueryTime {
 				time.Sleep(time.Duration(target.retryQueryPeriod) * time.Millisecond)
