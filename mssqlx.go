@@ -2,6 +2,7 @@ package mssqlx
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"strings"
@@ -24,6 +25,9 @@ var (
 
 const (
 	DefaultHealthCheckPeriodInMilli = 500
+
+	DefaultQueryRetryTimeWhenDriverBadConn   = 3
+	DefaultQueryRetryPeriodWhenDriverBadConn = 20 // milisecond
 )
 
 func parseError(db *sqlx.DB, err error) error {
@@ -201,8 +205,13 @@ type dbBalancer struct {
 	isWsrep               bool
 	_name                 string
 	numberOfHealthChecker int
+
 	healthCheckPeriod     int64
 	healthCheckPeriodLock sync.RWMutex
+
+	retryQueryTime   int
+	retryQueryPeriod int64
+	retryQueryLock   sync.RWMutex
 }
 
 // init balancer and start health checkers
@@ -214,8 +223,12 @@ func (c *dbBalancer) init(numHealthChecker int, numDbInstance int, isWsrep bool)
 	c.numberOfHealthChecker = numHealthChecker
 	c.dbs = &dbLinkList{}
 	c.fail = make(chan *sqlx.DB, numDbInstance)
-	c.healthCheckPeriod = DefaultHealthCheckPeriodInMilli
 	c.isWsrep = isWsrep
+
+	c.healthCheckPeriod = DefaultHealthCheckPeriodInMilli
+
+	c.retryQueryTime = DefaultQueryRetryTimeWhenDriverBadConn
+	c.retryQueryPeriod = DefaultQueryRetryPeriodWhenDriverBadConn
 
 	for i := 0; i < numHealthChecker; i++ {
 		go c.healthChecker()
@@ -255,6 +268,19 @@ func (c *dbBalancer) setHealthCheckPeriod(period uint64) {
 
 	if c.healthCheckPeriod = int64(period); c.healthCheckPeriod <= 0 {
 		c.healthCheckPeriod = DefaultHealthCheckPeriodInMilli
+	}
+}
+
+func (c *dbBalancer) setQueryRetryWhenBadConn(numberOfTime int, period uint64) {
+	c.retryQueryLock.Lock()
+	defer c.retryQueryLock.Unlock()
+
+	if c.retryQueryPeriod = int64(period); c.retryQueryPeriod <= 0 {
+		c.retryQueryPeriod = DefaultQueryRetryPeriodWhenDriverBadConn
+	}
+
+	if c.retryQueryTime = numberOfTime; c.retryQueryTime <= 0 {
+		c.retryQueryTime = DefaultQueryRetryTimeWhenDriverBadConn
 	}
 }
 
@@ -493,6 +519,44 @@ func _setMaxIdleConns(target []*sqlx.DB, n int) {
 		}(db, &wg)
 	}
 	wg.Wait()
+}
+
+// SetQueryRetryTimeWhenBadConn sets number of time to retry querying database and period between each retry when driver.BadConn detected on select query.
+// This prevents returning driver.BadConn to application when driver could retry connection and query again.
+//
+// Default is 3 time and 20 milisec between each.
+func (dbs *DBs) SetQueryRetryTimeWhenBadConn(numberOfTime int, period uint64) {
+	dbs.masterLock.Lock()
+	defer dbs.masterLock.Unlock()
+
+	dbs.masters.setQueryRetryWhenBadConn(numberOfTime, period)
+
+	dbs.slaveLock.Lock()
+	defer dbs.slaveLock.Unlock()
+
+	dbs.slaves.setQueryRetryWhenBadConn(numberOfTime, period)
+}
+
+// SetQueryRetryTimeWhenBadConnOnMaster sets number of time to retry querying database and period between each retry when driver.BadConn detected on select query on master nodes.
+// This prevents returning driver.BadConn to application when driver could retry connection and query again.
+//
+// Default is 3 time and 20 milisec between each.
+func (dbs *DBs) SetQueryRetryTimeWhenBadConnOnMaster(numberOfTime int, period uint64) {
+	dbs.masterLock.Lock()
+	defer dbs.masterLock.Unlock()
+
+	dbs.masters.setQueryRetryWhenBadConn(numberOfTime, period)
+}
+
+// SetQueryRetryTimeWhenBadConnOnSlave sets number of time to retry querying database and period between each retry when driver.BadConn detected on select query on slave nodes.
+// This prevents returning driver.BadConn to application when driver could retry connection and query again.
+//
+// Default is 3 time and 20 milisec between each.
+func (dbs *DBs) SetQueryRetryTimeWhenBadConnOnSlave(numberOfTime int, period uint64) {
+	dbs.slaveLock.Lock()
+	defer dbs.slaveLock.Unlock()
+
+	dbs.slaves.setQueryRetryWhenBadConn(numberOfTime, period)
 }
 
 // SetHealthCheckPeriod sets the period (in millisecond) for checking health of failed nodes
@@ -849,6 +913,8 @@ func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *sqlx.R
 	}
 
 	var db *dbLinkListNode
+
+	countBadConnErr := 0
 	for {
 		db = target.get(true)
 		if db == nil {
@@ -864,18 +930,38 @@ func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *sqlx.R
 			continue
 		}
 
-		r, e := db.db.NamedQuery(query, arg)
-		if e = parseError(db.db, e); e == ErrNetwork {
+		res, err = db.db.NamedQuery(query, arg)
+
+		// check driver.ErrBadConn occuring when a connection idle for a long time.
+		// this prevents returning driver.ErrBadConn to application
+		countBadConnErr = 0
+		for err == driver.ErrBadConn {
+			target.retryQueryLock.RLock()
+			if countBadConnErr < target.retryQueryTime {
+				time.Sleep(time.Duration(target.retryQueryPeriod) * time.Millisecond)
+				target.retryQueryLock.RUnlock()
+
+				res, err = db.db.NamedQuery(query, arg)
+				countBadConnErr++
+			} else {
+				target.retryQueryLock.RUnlock()
+				break
+			}
+		}
+
+		// check networking error
+		if err = parseError(db.db, err); err == ErrNetwork {
 			target.failure(db)
 			continue
 		}
 
-		if e != nil && target.isWsrep && (strings.HasPrefix(e.Error(), "ERROR 1047") || strings.HasPrefix(e.Error(), "Error 1047")) { // for galera cluster
+		// check Wsrep error
+		if err != nil && target.isWsrep && (strings.HasPrefix(err.Error(), "ERROR 1047") || strings.HasPrefix(err.Error(), "Error 1047")) { // for galera cluster
 			target.failure(db)
 			continue
 		}
 
-		return r, e
+		return
 	}
 }
 
@@ -959,6 +1045,8 @@ func _query(target *dbBalancer, query string, args ...interface{}) (dbr *sqlx.DB
 	}
 
 	var db *dbLinkListNode
+
+	countBadConnErr := 0
 	for {
 		db = target.get(true)
 		if db == nil {
@@ -974,18 +1062,37 @@ func _query(target *dbBalancer, query string, args ...interface{}) (dbr *sqlx.DB
 			continue
 		}
 
-		r, e := db.db.Query(query, args...)
-		if e = parseError(db.db, e); e == ErrNetwork {
+		res, err = db.db.Query(query, args...)
+
+		// check driver.ErrBadConn occuring when a connection idle for a long time.
+		// this prevents returning driver.ErrBadConn to application
+		countBadConnErr = 0
+		for err == driver.ErrBadConn {
+			target.retryQueryLock.RLock()
+			if countBadConnErr < target.retryQueryTime {
+				time.Sleep(time.Duration(target.retryQueryPeriod) * time.Millisecond)
+				target.retryQueryLock.RUnlock()
+
+				res, err = db.db.Query(query, args...)
+				countBadConnErr++
+			} else {
+				target.retryQueryLock.RUnlock()
+				break
+			}
+		}
+
+		if err = parseError(db.db, err); err == ErrNetwork {
 			target.failure(db)
 			continue
 		}
 
-		if e != nil && target.isWsrep && (strings.HasPrefix(e.Error(), "ERROR 1047") || strings.HasPrefix(e.Error(), "Error 1047")) { // for galera cluster
+		if err != nil && target.isWsrep && (strings.HasPrefix(err.Error(), "ERROR 1047") || strings.HasPrefix(err.Error(), "Error 1047")) { // for galera cluster
 			target.failure(db)
 			continue
 		}
 
-		return db.db, r, e
+		dbr = db.db
+		return
 	}
 }
 

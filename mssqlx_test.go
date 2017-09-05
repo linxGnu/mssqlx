@@ -68,6 +68,7 @@ func ConnectMasterSlave() {
 		pgDBs, _ = ConnectMasterSlaves("postgres", masterDSNs, slaveDSNs)
 		pgDBs.SetMaxIdleConns(5)
 		pgDBs.SetMaxOpenConns(10)
+		pgDBs.SetQueryRetryTimeWhenBadConn(3, 10)
 	}
 
 	if TestWMysql {
@@ -76,6 +77,7 @@ func ConnectMasterSlave() {
 		myDBs, _ = ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs)
 		myDBs.SetMaxIdleConns(5)
 		myDBs.SetMaxOpenConns(10)
+		myDBs.SetQueryRetryTimeWhenBadConn(3, 10)
 	}
 
 	if TestWSqlite {
@@ -84,6 +86,7 @@ func ConnectMasterSlave() {
 		sqDBs, _ = ConnectMasterSlaves("sqlite3", masterDSNs, slaveDSNs)
 		sqDBs.SetMaxIdleConns(5)
 		sqDBs.SetMaxOpenConns(10)
+		sqDBs.SetQueryRetryTimeWhenBadConn(3, 10)
 	}
 }
 
