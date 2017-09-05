@@ -485,9 +485,30 @@ func TestConnectMasterSlave(t *testing.T) {
 	if db.masters.healthCheckPeriod != 300 || db.slaves.healthCheckPeriod != 200 {
 		t.Fatal("SetMasterHealthCheckPeriod fail")
 	}
+
+	db.SetQueryRetryTimeWhenBadConnOnMaster(0, 0)
+	if db.masters.retryQueryTime != DefaultQueryRetryTimeWhenDriverBadConn || db.masters.retryQueryPeriod != DefaultQueryRetryPeriodWhenDriverBadConn {
+		t.Fatal("SetQueryRetryTimeWhenBadConnOnMaster fail")
+	}
+
+	db.SetQueryRetryTimeWhenBadConnOnMaster(17, 71)
+	if db.masters.retryQueryTime != 17 || db.masters.retryQueryPeriod != 71 {
+		t.Fatal("SetQueryRetryTimeWhenBadConnOnMaster fail")
+	}
+
 	db.SetSlaveHealthCheckPeriod(400)
 	if db.masters.healthCheckPeriod != 300 || db.slaves.healthCheckPeriod != 400 {
 		t.Fatal("SetSlaveHealthCheckPeriod fail")
+	}
+
+	db.SetQueryRetryTimeWhenBadConnOnSlave(0, 0)
+	if db.slaves.retryQueryTime != DefaultQueryRetryTimeWhenDriverBadConn || db.slaves.retryQueryPeriod != DefaultQueryRetryPeriodWhenDriverBadConn {
+		t.Fatal("SetQueryRetryTimeWhenBadConnOnSlave fail")
+	}
+
+	db.SetQueryRetryTimeWhenBadConnOnSlave(17, 71)
+	if db.slaves.retryQueryTime != 17 || db.slaves.retryQueryPeriod != 71 {
+		t.Fatal("SetQueryRetryTimeWhenBadConnOnSlave fail")
 	}
 
 	// test set idle connection
