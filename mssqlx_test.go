@@ -669,7 +669,7 @@ func TestGlobalFunc(t *testing.T) {
 	}
 	dbB.destroy()
 
-	// check mapper func to see panic occuring
+	// check mapper func to see panic occurring
 	_mapperFunc([]*sqlx.DB{db1, db2}, nil)
 
 	// check ping
@@ -1399,7 +1399,7 @@ func TestUsages(t *testing.T) {
 		person := &Person{}
 		err = db.Get(person, "SELECT * FROM person WHERE first_name=$1", "does-not-exist")
 		if err == nil {
-			t.Fatal("Should have got an error for Get on non-existant row.")
+			t.Fatal("Should have got an error for Get on non-existent row.")
 		}
 
 		// test name mapping

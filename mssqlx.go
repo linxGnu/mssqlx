@@ -25,10 +25,14 @@ var (
 )
 
 const (
+	// DefaultHealthCheckPeriodInMilli default period in millisecond mssqlx should do a health check of failed database
 	DefaultHealthCheckPeriodInMilli = 500
 
-	DefaultQueryRetryTimeWhenDriverBadConn   = 3
-	DefaultQueryRetryPeriodWhenDriverBadConn = 20 // milisecond
+	// DefaultQueryRetryTimeWhenDriverBadConn default number of time mssqlx should retry query after driver.ErrBadConn detected
+	DefaultQueryRetryTimeWhenDriverBadConn = 3
+
+	// DefaultQueryRetryPeriodWhenDriverBadConn default period in millisecond mssqlx should retry query after driver.ErrBadConn detected
+	DefaultQueryRetryPeriodWhenDriverBadConn = 20
 )
 
 func parseError(db *sqlx.DB, err error) error {
@@ -52,6 +56,7 @@ type dbLinkListNode struct {
 	prev *dbLinkListNode
 }
 
+// DBNode interface of a db node
 type DBNode interface {
 	GetDB() *sqlx.DB
 }
@@ -287,8 +292,8 @@ func (c *dbBalancer) setQueryRetryWhenBadConn(numberOfTime int, period uint64) {
 
 // WsrepVariable ...
 type WsrepVariable struct {
-	Variable_name string `db:"Variable_name"`
-	Value         string `db:"Value"`
+	VariableName string `db:"Variable_name"`
+	Value        string `db:"Value"`
 }
 
 // checkWsrepReady check if wsrep is in ready state
@@ -522,8 +527,8 @@ func _setMaxIdleConns(target []*sqlx.DB, n int) {
 	wg.Wait()
 }
 
-// SetQueryRetryTimeWhenBadConn sets number of time to retry querying database and period between each retry when driver.BadConn detected on select query.
-// This prevents returning driver.BadConn to application when driver could retry connection and query again.
+// SetQueryRetryTimeWhenBadConn sets number of time to retry querying database and period between each retry when driver.ErrBadConn detected on select query.
+// This prevents returning driver.ErrBadConn to application when driver could retry connection and query again.
 //
 // Default is 3 time and 20 milisec between each.
 func (dbs *DBs) SetQueryRetryTimeWhenBadConn(numberOfTime int, period uint64) {
@@ -538,8 +543,8 @@ func (dbs *DBs) SetQueryRetryTimeWhenBadConn(numberOfTime int, period uint64) {
 	dbs.slaves.setQueryRetryWhenBadConn(numberOfTime, period)
 }
 
-// SetQueryRetryTimeWhenBadConnOnMaster sets number of time to retry querying database and period between each retry when driver.BadConn detected on select query on master nodes.
-// This prevents returning driver.BadConn to application when driver could retry connection and query again.
+// SetQueryRetryTimeWhenBadConnOnMaster sets number of time to retry querying database and period between each retry when driver.ErrBadConn detected on select query on master nodes.
+// This prevents returning driver.ErrBadConn to application when driver could retry connection and query again.
 //
 // Default is 3 time and 20 milisec between each.
 func (dbs *DBs) SetQueryRetryTimeWhenBadConnOnMaster(numberOfTime int, period uint64) {
@@ -549,8 +554,8 @@ func (dbs *DBs) SetQueryRetryTimeWhenBadConnOnMaster(numberOfTime int, period ui
 	dbs.masters.setQueryRetryWhenBadConn(numberOfTime, period)
 }
 
-// SetQueryRetryTimeWhenBadConnOnSlave sets number of time to retry querying database and period between each retry when driver.BadConn detected on select query on slave nodes.
-// This prevents returning driver.BadConn to application when driver could retry connection and query again.
+// SetQueryRetryTimeWhenBadConnOnSlave sets number of time to retry querying database and period between each retry when driver.ErrBadConn detected on select query on slave nodes.
+// This prevents returning driver.ErrBadConn to application when driver could retry connection and query again.
 //
 // Default is 3 time and 20 milisec between each.
 func (dbs *DBs) SetQueryRetryTimeWhenBadConnOnSlave(numberOfTime int, period uint64) {
@@ -938,8 +943,8 @@ func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *sqlx.R
 
 		res, err = db.db.NamedQuery(query, arg)
 
-		// check driver.ErrBadConn occuring when a connection idle for a long time.
-		// this prevents returning driver.ErrBadConn to application
+		// detect driver.ErrBadConn occurring when a connection idle for a long time.
+		// this prevents returning driver.ErrBadConn to application.
 		countBadConnErr = 0
 		for isErrBadConn(err) {
 			target.retryQueryLock.RLock()
@@ -1070,8 +1075,8 @@ func _query(target *dbBalancer, query string, args ...interface{}) (dbr *sqlx.DB
 
 		res, err = db.db.Query(query, args...)
 
-		// check driver.ErrBadConn occuring when a connection idle for a long time.
-		// this prevents returning driver.ErrBadConn to application
+		// detect driver.ErrBadConn occurring when a connection idle for a long time.
+		// this prevents returning driver.ErrBadConn to application.
 		countBadConnErr = 0
 		for isErrBadConn(err) {
 			target.retryQueryLock.RLock()
@@ -1220,7 +1225,7 @@ func (dbs *DBs) Exec(query string, args ...interface{}) (sql.Result, error) {
 	return _exec(dbs.masters, query, args...)
 }
 
-// Exec do exec on slave only
+// ExecSlave do exec on slave only
 func (dbs *DBs) ExecSlave(query string, args ...interface{}) (sql.Result, error) {
 	return _exec(dbs.slaves, query, args...)
 }

@@ -5,9 +5,6 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-
-	"io/ioutil"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -128,14 +125,6 @@ func isUnsafe(i interface{}) bool {
 	case *sqlx.NamedStmt:
 		unsafe := reflect.ValueOf(v.Stmt).Elem().FieldByName("unsafe")
 		return unsafe.Bool()
-	case Stmt:
-		return v.unsafe
-	case *Stmt:
-		return v.unsafe
-	case qStmt:
-		return v.unsafe
-	case *qStmt:
-		return v.unsafe
 	case sqlx.DB:
 		unsafe := reflect.ValueOf(v).FieldByName("unsafe")
 		return unsafe.Bool()
@@ -225,78 +214,6 @@ func (r *Row) Err() error {
 	return r.err
 }
 
-// Stmt is an sqlx wrapper around sql.Stmt with extra functionality
-type Stmt struct {
-	*sql.Stmt
-	unsafe bool
-	Mapper *reflectx.Mapper
-}
-
-// Unsafe returns a version of Stmt which will silently succeed to scan when
-// columns in the SQL result have no fields in the destination struct.
-func (s *Stmt) Unsafe() *Stmt {
-	return &Stmt{Stmt: s.Stmt, unsafe: true, Mapper: s.Mapper}
-}
-
-// Select using the prepared statement.
-// Any placeholder parameters are replaced with supplied args.
-func (s *Stmt) Select(dest interface{}, args ...interface{}) error {
-	return Select(&qStmt{s}, dest, "", args...)
-}
-
-// Get using the prepared statement.
-// Any placeholder parameters are replaced with supplied args.
-// An error is returned if the result set is empty.
-func (s *Stmt) Get(dest interface{}, args ...interface{}) error {
-	return Get(&qStmt{s}, dest, "", args...)
-}
-
-// MustExec (panic) using this statement.  Note that the query portion of the error
-// output will be blank, as Stmt does not expose its query.
-// Any placeholder parameters are replaced with supplied args.
-func (s *Stmt) MustExec(args ...interface{}) sql.Result {
-	return MustExec(&qStmt{s}, "", args...)
-}
-
-// QueryRowx using this statement.
-// Any placeholder parameters are replaced with supplied args.
-func (s *Stmt) QueryRowx(args ...interface{}) *Row {
-	qs := &qStmt{s}
-	return qs.QueryRowx("", args...)
-}
-
-// Queryx using this statement.
-// Any placeholder parameters are replaced with supplied args.
-func (s *Stmt) Queryx(args ...interface{}) (*Rows, error) {
-	qs := &qStmt{s}
-	return qs.Queryx("", args...)
-}
-
-// qStmt is an unexposed wrapper which lets you use a Stmt as a Queryer & Execer by
-// implementing those interfaces and ignoring the `query` argument.
-type qStmt struct{ *Stmt }
-
-func (q *qStmt) Query(query string, args ...interface{}) (*sql.Rows, error) {
-	return q.Stmt.Query(args...)
-}
-
-func (q *qStmt) Queryx(query string, args ...interface{}) (*Rows, error) {
-	r, err := q.Stmt.Query(args...)
-	if err != nil {
-		return nil, err
-	}
-	return &Rows{Rows: r, unsafe: q.Stmt.unsafe, Mapper: q.Stmt.Mapper}, err
-}
-
-func (q *qStmt) QueryRowx(query string, args ...interface{}) *Row {
-	rows, err := q.Stmt.Query(args...)
-	return &Row{rows: rows, err: err, unsafe: q.Stmt.unsafe, Mapper: q.Stmt.Mapper}
-}
-
-func (q *qStmt) Exec(query string, args ...interface{}) (sql.Result, error) {
-	return q.Stmt.Exec(args...)
-}
-
 // Rows is a wrapper around sql.Rows which caches costly reflect operations
 // during a looped StructScan
 type Rows struct {
@@ -359,65 +276,6 @@ func (r *Rows) StructScan(dest interface{}) error {
 		return err
 	}
 	return r.Err()
-}
-
-// Select executes a query using the provided Queryer, and StructScans each row
-// into dest, which must be a slice.  If the slice elements are scannable, then
-// the result set must have only one column.  Otherwise, StructScan is used.
-// The *sql.Rows are closed automatically.
-// Any placeholder parameters are replaced with supplied args.
-func Select(q Queryer, dest interface{}, query string, args ...interface{}) error {
-	rows, err := q.Queryx(query, args...)
-	if err != nil {
-		return err
-	}
-	// if something happens here, we want to make sure the rows are Closed
-	defer rows.Close()
-	return scanAll(rows, dest, false)
-}
-
-// Get does a QueryRow using the provided Queryer, and scans the resulting row
-// to dest.  If dest is scannable, the result must only have one column.  Otherwise,
-// StructScan is used.  Get will return sql.ErrNoRows like row.Scan would.
-// Any placeholder parameters are replaced with supplied args.
-// An error is returned if the result set is empty.
-func Get(q Queryer, dest interface{}, query string, args ...interface{}) error {
-	r := q.QueryRowx(query, args...)
-	return r.scanAny(dest, false)
-}
-
-// LoadFile exec's every statement in a file (as a single call to Exec).
-// LoadFile may return a nil *sql.Result if errors are encountered locating or
-// reading the file at path.  LoadFile reads the entire file into memory, so it
-// is not suitable for loading large data dumps, but can be useful for initializing
-// schemas or loading indexes.
-//
-// FIXME: this does not really work with multi-statement files for mattn/go-sqlite3
-// or the go-mysql-driver/mysql drivers;  pq seems to be an exception here.  Detecting
-// this by requiring something with DriverName() and then attempting to split the
-// queries will be difficult to get right, and its current driver-specific behavior
-// is deemed at least not complex in its incorrectness.
-func LoadFile(e Execer, path string) (*sql.Result, error) {
-	realpath, err := filepath.Abs(path)
-	if err != nil {
-		return nil, err
-	}
-	contents, err := ioutil.ReadFile(realpath)
-	if err != nil {
-		return nil, err
-	}
-	res, err := e.Exec(string(contents))
-	return &res, err
-}
-
-// MustExec execs the query using e and panics if there was an error.
-// Any placeholder parameters are replaced with supplied args.
-func MustExec(e Execer, query string, args ...interface{}) sql.Result {
-	res, err := e.Exec(query, args...)
-	if err != nil {
-		panic(err)
-	}
-	return res
 }
 
 // SliceScan using this Rows.
