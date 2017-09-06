@@ -6,26 +6,26 @@
 [![godoc](https://img.shields.io/badge/docs-GoDoc-green.svg)](https://godoc.org/github.com/linxGnu/mssqlx)
 [![license](http://img.shields.io/badge/license-MIT-red.svg?style=flat)](https://raw.githubusercontent.com/jmoiron/sqlx/master/LICENSE)
 
-mssqlx is capable of doing queries to master-slave (or master-master) database structure, provides very similar APIs compared to sqlx.
+mssqlx stands as embedded database proxy in front of master-slave, master-master, Wsrep, Galera Cluster.
 
 Features and concepts are:
 
-* API compatible to sqlx. All additional layers/codes are within mssqlx.go file. All other files belongs to sqlx. My work is only on mssqlx.go.
-* Auto and lightweight round-robin balancer of `select/show queries` on slaves. 
-* `update/delete/insert queries` are executed on a chosen master at a time.
-* Auto error handling on master (Wsrep/Galera). If chosen master failed (wsrep not ready, master down, etc), `update/delete/insert queries` would be switched to other master. This new chosen master is used for further data modification query.
-* Auto health checking master/slaves. When one downs, mssqlx moves its client to `failure-zone`, avoids querying over this client. As the master/slave ups again, mssqlx puts automatically the client back for upcoming queries.
+* API compatible to sqlx. All additional layers/codes are within mssqlx.go file.
+* Auto and lightweight round-robin balancer of `select/show queries` on slaves (by defaults) or masters. 
+* `update/delete/insert queries` are executed on a chosen master at a time. 
+* Builtin error handling for Wsrep, Galera and some database drivers.
+* Auto health checking.
 
 Notices:
-* APIs supports executing query on Master-only or Slave-only (or boths). Function name for querying on Master-only has suffix `OnMaster`, querying on Slaves-only has suffix `OnSlave`.
-* Default `select/show queries` are on Slaves.
-* Default `update/delete/insert queries` are on Masters.
+* APIs supports executing query on master-only or slave-only (or boths). Function name for querying on master-only has suffix `OnMaster`, querying on slaves-only has suffix `OnSlave`.
+* Default `select/show queries` are balanced on slaves.
+* Default `update/delete/insert queries` are on only one master at a time. If this one failed (wsrep not ready, master down, etc), `update/delete/insert queries` would be switched to other master. New chosen master is used for further data modification query.
 
-## install
+## Install
 
     go get github.com/linxGnu/mssqlx
 
-## usage
+## Usage
 
 Below is an example which shows some common use cases for mssqlx.
 
@@ -37,10 +37,7 @@ import (
     "database/sql"
 	
     _ "github.com/go-sql-driver/mysql"
-    "github.com/linxGnu/mssqlx/types"
     "github.com/linxGnu/mssqlx"
-
-    "log"
 )
 
 var schema = `
