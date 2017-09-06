@@ -6,20 +6,27 @@
 [![godoc](https://img.shields.io/badge/docs-GoDoc-green.svg)](https://godoc.org/github.com/linxGnu/mssqlx)
 [![license](http://img.shields.io/badge/license-MIT-red.svg?style=flat)](https://raw.githubusercontent.com/jmoiron/sqlx/master/LICENSE)
 
-mssqlx stands as embedded database proxy in front of master-slave, master-master, Wsrep, Galera Cluster.
+Embeddable, high avaiable, performance and lightweight database client library for any golang applications.
 
 Features and concepts are:
 
-* API compatible to sqlx. All additional layers/codes are within mssqlx.go file.
+* Builtin layer/extension to [sqlx](http://jmoiron.github.io/sqlx).
+* Auto proxy for any master-slave, master-master databases. Compatible with Wsrep, Galera Cluster and others.
 * Auto and lightweight round-robin balancer of `select/show queries` on slaves (by defaults) or masters. 
 * `update/delete/insert queries` are executed on a chosen master at a time. 
 * Builtin error handling for Wsrep, Galera and some database drivers.
 * Auto health checking.
 
-Notices:
+## Notices
+
 * APIs supports executing query on master-only or slave-only (or boths). Function name for querying on master-only has suffix `OnMaster`, querying on slaves-only has suffix `OnSlave`.
 * Default `select/show queries` are balanced on slaves.
 * Default `update/delete/insert queries` are on only one master at a time. If this one failed (wsrep not ready, master down, etc), `update/delete/insert queries` would be switched to other master. New chosen master is used for further data modification query.
+
+## In production
+
+* [iParking](https://iparking.vn) : a large car parking system of Ha Noi with heavy workload.
+* [Trusting Social](https://trustingsocial.com) : most backend components will be powered by mssqlx soon.
 
 ## Install
 
