@@ -139,15 +139,6 @@ func main() {
     // or get from slaves only: db.GetOnSlave(&people, "SELECT * FROM person ORDER BY first_name ASC")
     // or get from master only: db.GetOnMaster(&people, "SELECT * FROM person ORDER BY first_name ASC")
 
-    // Error handling
-    if err == mssqlx.ErrNoRecord {
-        fmt.Println("Jason not found")
-    } else if err != nil {
-        fmt.Println("Error: %v", err)
-    } else {
-        fmt.Printf("%#v\n", jason)
-    }
-
     // if you have null fields and use SELECT *, you must use sql.Null* in your struct
     places := []Place{}
     err = db.Select(&places, "SELECT * FROM place ORDER BY telcode ASC")
