@@ -60,13 +60,6 @@ CREATE TABLE place (
     telcode integer
 )`
 
-type SpaceCow struct {
-	Id                   uint
-	Data                 types.JSONText
-	Created_at           time.Time
-	Updated_at           time.Time
-}
-
 type Person struct {
     FirstName string `db:"first_name"`
     LastName  string `db:"last_name"`
@@ -82,8 +75,8 @@ type Place struct {
 func main() {
     dsn := "root:123@(%s:3306)/test?charset=utf8&collation=utf8_general_ci&parseTime=true"
 
-    masterDSNs := []string{fmt.Sprintf(dsn, "172.31.25.233"), fmt.Sprintf(dsn, "172.31.25.234"), fmt.Sprintf(dsn, "172.31.25.235")}
-    slaveDSNs := []string{fmt.Sprintf(dsn, "172.31.25.233"), fmt.Sprintf(dsn, "172.31.25.234"), fmt.Sprintf(dsn, "172.31.25.235")}
+    masterDSNs := []string{fmt.Sprintf(dsn, "172.31.25.233"), fmt.Sprintf(dsn, "172.31.25.234"))}
+    slaveDSNs := []string{fmt.Sprintf(dsn, "172.31.25.234"), fmt.Sprintf(dsn, "172.31.25.235")}
 
     db, _ := mssqlx.ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs)
     // db, _ := mssqlx.ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs, true) -- indicates Galera/Wsrep Replication
@@ -95,8 +88,9 @@ func main() {
     db.SetMaxOpenConns(50) // set max open connections to all nodes
     // db.SetMasterMaxOpenConns(50) 
     // db.SetSlaveMaxOpenConns(50)
-
-    db.SetHealthCheckPeriod(1000) // if nodes fail, checking healthy in a period (in milliseconds) for auto reconnect. Default is 500.
+    
+    // if nodes fail, checking healthy in a period (in milliseconds) for auto reconnect. Default is 500.
+    db.SetHealthCheckPeriod(1000) 
     // db.SetMasterHealthCheckPeriod(1000)
     // db.SetSlaveHealthCheckPeriod(1000)
 
