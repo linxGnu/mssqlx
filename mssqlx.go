@@ -41,8 +41,10 @@ func parseError(db *sqlx.DB, err error) error {
 	}
 
 	if db != nil {
-		if _, er := db.Exec("SELECT 1"); er != nil {
-			return ErrNetwork
+		if er := db.Ping(); er != nil {
+			if _, er = db.Exec("SELECT 1"); er != nil {
+				return ErrNetwork
+			}
 		}
 	}
 
