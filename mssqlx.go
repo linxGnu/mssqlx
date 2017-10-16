@@ -1019,6 +1019,16 @@ func _namedExec(target *dbBalancer, query string, arg interface{}) (res sql.Resu
 		}
 
 		r, e := db.db.NamedExec(query, arg)
+
+		// detect driver.ErrBadConn occurring when a connection idle for a long time.
+		// this prevents returning driver.ErrBadConn to application.
+		if isErrBadConn(e) {
+			// retry 1 time only
+			time.Sleep(time.Duration(target.retryQueryPeriod) * time.Millisecond)
+
+			r, e = db.db.NamedExec(query, arg)
+		}
+
 		if e = parseError(db.db, e); e == ErrNetwork {
 			target.failure(db)
 			continue
@@ -1261,6 +1271,16 @@ func _exec(target *dbBalancer, query string, args ...interface{}) (res sql.Resul
 		}
 
 		r, e := db.db.Exec(query, args...)
+
+		// detect driver.ErrBadConn occurring when a connection idle for a long time.
+		// this prevents returning driver.ErrBadConn to application.
+		if isErrBadConn(e) {
+			// retry 1 time only
+			time.Sleep(time.Duration(target.retryQueryPeriod) * time.Millisecond)
+
+			r, e = db.db.Exec(query, args...)
+		}
+
 		if e = parseError(db.db, e); e == ErrNetwork {
 			target.failure(db)
 			continue
