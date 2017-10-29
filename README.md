@@ -17,12 +17,6 @@ Features and concepts are:
 * Builtin error handling for Wsrep, Galera and some database drivers.
 * Auto health checking.
 
-## Notices
-
-* APIs supports executing query on master-only or slave-only (or boths). Function name for querying on master-only has suffix `OnMaster`, querying on slaves-only has suffix `OnSlave`.
-* Default `select/show queries` are balanced on slaves.
-* Default `update/delete/insert queries` are on only one master at a time. If this one failed (wsrep not ready, master down, etc), `update/delete/insert queries` would be switched to other master. New chosen master is used for further data modification query.
-
 ## In production
 
 * [iParking](https://iparking.vn) : a large car parking system of Ha Noi with heavy workload.
@@ -166,3 +160,9 @@ if total > 0 && master != nil {
     }
 }
 ```
+
+## Notices
+
+* APIs supports executing query on master-only or slave-only (or boths). Function name for querying on master-only has suffix `OnMaster`, querying on slaves-only has suffix `OnSlave`.
+* Default `select/show queries` are balanced on slaves.
+* Default `update/delete/insert queries` are on only one master at a time. If this one failed (wsrep not ready, master down, etc), `update/delete/insert queries` would be switched to other master. New chosen master is used for further data modification query.
