@@ -26,84 +26,125 @@ Features and concepts are:
 ## In production
 
 * [iParking](https://iparking.vn) : a large car parking system of Ha Noi with heavy workload.
-* [Trusting Social](https://trustingsocial.com) : most backend components will be powered by mssqlx soon.
 
 ## Install
 
-    go get github.com/linxGnu/mssqlx
+    go get -u github.com/linxGnu/mssqlx
 
-## Usage
+## Connecting to Databases
 
-Below is an example which shows some common use cases for mssqlx.
-
+mssqlx is compatible to all kind of databases which `database/sql` supports. Below code is `mysql` usage:
 
 ```go
-package main
-
 import (
-    "database/sql"
-	
     _ "github.com/go-sql-driver/mysql"
     "github.com/linxGnu/mssqlx"
 )
 
-var schema = `
-CREATE TABLE person (
-    first_name text,
-    last_name text,
-    email text
-);
+dsn := "root:123@(%s:3306)/test?charset=utf8&collation=utf8_general_ci&parseTime=true"
+masterDSNs := []string{
+    fmt.Sprintf(dsn, "172.31.25.233"), // address of master 1
+    fmt.Sprintf(dsn, "172.31.24.233"), // address of master 2 if have
+    fmt.Sprintf(dsn, "172.31.23.233"), // address of master 3 if have
+}
+slaveDSNs := []string{
+    fmt.Sprintf(dsn, "172.31.25.234"), // address of slave 1
+    fmt.Sprintf(dsn, "172.31.25.235"), // address of slave 2
+    fmt.Sprintf(dsn, "172.31.25.236"), // address of slave 3
+}
 
-CREATE TABLE place (
-    country text,
-    city text NULL,
-    telcode integer
-)`
+db, _ := mssqlx.ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs)
+```
 
+## Configuration
+
+It's highly recommended to setup configuration before querying.
+
+```go
+db.SetMaxIdleConns(20) // set max idle connections to all nodes
+// db.SetMasterMaxIdleConns(20) // set max idle connections to master nodes
+// db.SetSlaveMaxIdleConns(20) // set max idle connections to slave nodes
+
+db.SetMaxOpenConns(50) // set max open connections to all nodes
+// db.SetMasterMaxOpenConns(50) 
+// db.SetSlaveMaxOpenConns(50)
+    
+// if nodes fail, checking healthy in a period (in milliseconds) for auto reconnect. Default is 500.
+db.SetHealthCheckPeriod(1000) 
+// db.SetMasterHealthCheckPeriod(1000)
+// db.SetSlaveHealthCheckPeriod(1000)
+```
+
+## Select
+
+```go
 type Person struct {
     FirstName string `db:"first_name"`
     LastName  string `db:"last_name"`
     Email     string
+    Data      []byte
 }
 
-type Place struct {
-    Country string
-    City    sql.NullString
-    TelCode int
+var people []Person
+db.Select(&people, "SELECT * FROM person WHERE id > ? and id < ? ORDER BY first_name ASC", 1, 1000)
+```
+
+## Get
+
+```go
+var person Person
+db.Get(&person, "SELECT * FROM person WHERE id = ?", 1)
+```
+
+## Queryx
+
+```go
+// Loop through rows using only one struct
+var person Person
+
+rows, err := db.Queryx("SELECT * FROM person") // or db.QueryxOnMaster(...)
+for rows.Next() {
+    if err := rows.StructScan(&person); err != nil {
+        log.Fatalln(err)
+    } 
+    fmt.Printf("%#v\n", person)
 }
+```
 
-func main() {
-    dsn := "root:123@(%s:3306)/test?charset=utf8&collation=utf8_general_ci&parseTime=true"
+## Named query
 
-    masterDSNs := []string{fmt.Sprintf(dsn, "172.31.25.233"), fmt.Sprintf(dsn, "172.31.25.234"))}
-    slaveDSNs := []string{fmt.Sprintf(dsn, "172.31.25.234"), fmt.Sprintf(dsn, "172.31.25.235")}
+```go
+// Loop through rows using only one struct
+var person Person
 
-    db, _ := mssqlx.ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs)
-    // db, _ := mssqlx.ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs, true) -- indicates Galera/Wsrep Replication
+rows, err := db.NamedQuery(`SELECT * FROM person WHERE first_name = :fn`, map[string]interface{}{"fn": "Bin"}) // or db.NamedQueryOnMaster(...)
+for rows.Next() {
+    if err := rows.StructScan(&person); err != nil {
+        log.Fatalln(err)
+    } 
+    fmt.Printf("%#v\n", person)
+}
+```
 
-    db.SetMaxIdleConns(20) // set max idle connections to all nodes
-    // db.SetMasterMaxIdleConns(20) // set max idle connections to master nodes
-    // db.SetSlaveMaxIdleConns(20) // set max idle connections to slave nodes
+## Exec (insert/update/delete/etc...)
 
-    db.SetMaxOpenConns(50) // set max open connections to all nodes
-    // db.SetMasterMaxOpenConns(50) 
-    // db.SetSlaveMaxOpenConns(50)
+```go
+result, err := db.Exec("DELETE FROM person WHERE id < ?", 100)
+```
+
+## Transaction
+
+```go
+// Recommended write transaction this way
+master, total := db.GetMaster()
+if total > 0 && master != nil {
+    tx, e := master.GetDB().Begin()
+    if e != nil {
+	    return e
+    }
     
-    // if nodes fail, checking healthy in a period (in milliseconds) for auto reconnect. Default is 500.
-    db.SetHealthCheckPeriod(1000) 
-    // db.SetMasterHealthCheckPeriod(1000)
-    // db.SetSlaveHealthCheckPeriod(1000)
-
-    // Recommended write transaction this way
-    master, total := db.GetMaster()
-    if total > 0 && master != nil {
-	tx, e := master.GetDB().Begin()
-	if e != nil {
-		return e
-	}
-
-	shouldAutoRollBack := true
-	defer func() {
+    shouldAutoRollBack := true
+    defer func() {
 		if e := recover(); e != nil {
 			err = fmt.Errorf("%v", e)
 			tx.Rollback()
@@ -112,79 +153,16 @@ func main() {
 		}
 	}()
 			
-	if _, err = tx.Exec(........); err != nil {
-		return
-	}
-			
-	if err = tx.Commit(); err != nil {
-		shouldAutoRollBack = false
-	}
-    }
-
-    // Query all master and slave databases, storing results in a []Person (wrapped in []interface{})
-    people := []Person{}
-    db.Select(&people, "SELECT * FROM person ORDER BY first_name ASC")
-    // or select from slaves only: db.SelectOnSlave(&people, "SELECT * FROM person ORDER BY first_name ASC")
-    // or select from master only: db.SelectOnMaster(&people, "SELECT * FROM person ORDER BY first_name ASC")
-    jason, john := people[0], people[1]
-
-    fmt.Printf("%#v\n%#v", jason, john)
-    // Person{FirstName:"Jason", LastName:"Moiron", Email:"jmoiron@jmoiron.net"}
-    // Person{FirstName:"John", LastName:"Doe", Email:"johndoeDNE@gmail.net"}
-
-    // You can also get a single result, a la QueryRow
-    jason = Person{}
-    err = db.Get(&jason, "SELECT * FROM person WHERE first_name=$1", "Jason")
-    // or without naming: db.Get(&jason, "SELECT * FROM person WHERE first_name = ?", "Jason")
-    // or get from slaves only: db.GetOnSlave(&people, "SELECT * FROM person ORDER BY first_name ASC")
-    // or get from master only: db.GetOnMaster(&people, "SELECT * FROM person ORDER BY first_name ASC")
-
-    // if you have null fields and use SELECT *, you must use sql.Null* in your struct
-    places := []Place{}
-    err = db.Select(&places, "SELECT * FROM place ORDER BY telcode ASC")
-    if err != nil {
-        fmt.Println(err)
+    if _, err = tx.Exec("INSERT INTO person(first_name, last_name, email, data) VALUES (?,?,?,?)", "Jon", "Dow", "jon@gmail", []byte{1, 2}); err != nil {
         return
     }
-    usa, singsing, honkers := places[0], places[1], places[2]
     
-    fmt.Printf("%#v\n%#v\n%#v\n", usa, singsing, honkers)
-    // Place{Country:"United States", City:sql.NullString{String:"New York", Valid:true}, TelCode:1}
-    // Place{Country:"Singapore", City:sql.NullString{String:"", Valid:false}, TelCode:65}
-    // Place{Country:"Hong Kong", City:sql.NullString{String:"", Valid:false}, TelCode:852}
-
-    // Loop through rows using only one struct
-    place := Place{}
-    rows, err := db.Queryx("SELECT * FROM place") 
-    // or db.QueryxOnMaster(...)
-    // or db.QueryxOnSlave(...)
-
-    for rows.Next() {
-        err := rows.StructScan(&place)
-        if err != nil {
-            log.Fatalln(err)
-        } 
-        fmt.Printf("%#v\n", place)
+    if _, err = tx.Exec("INSERT INTO person(first_name, last_name, email, data) VALUES (?,?,?,?)", "Jon", "Snow", "snow@gmail", []byte{1}); err != nil {
+        return
     }
-    // Place{Country:"United States", City:sql.NullString{String:"New York", Valid:true}, TelCode:1}
-    // Place{Country:"Hong Kong", City:sql.NullString{String:"", Valid:false}, TelCode:852}
-    // Place{Country:"Singapore", City:sql.NullString{String:"", Valid:false}, TelCode:65}
-
-    // Named queries, using `:name` as the bindvar.  Automatic bindvar support
-    // which takes into account the dbtype based on the driverName on mssqlx.Connect
-    _, err = db.NamedExecOnMaster(`INSERT INTO person (first_name,last_name,email) VALUES (:first,:last,:email)`, 
-        map[string]interface{}{
-            "first": "Bin",
-            "last": "Smuth",
-            "email": "bensmith@allblacks.nz",
-    })
-
-    // Selects Mr. Smith from the database
-    rows, err = db.NamedQuery(`SELECT * FROM person WHERE first_name=:fn`, map[string]interface{}{"fn": "Bin"})
-
-    // Named queries can also use structs.  Their bind names follow the same rules
-    // as the name -> db mapping, so struct fields are lowercased and the `db` tag
-    // is taken into consideration.
-    rows, err = db.NamedQuery(`SELECT * FROM person WHERE first_name=:first_name`, jason)
+			
+    if err = tx.Commit(); err != nil {
+        shouldAutoRollBack = false
+    }
 }
 ```
