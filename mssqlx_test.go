@@ -393,17 +393,17 @@ func TestDbLinkListNode(t *testing.T) {
 func TestDbBalancer(t *testing.T) {
 	dbB := dbBalancer{}
 
-	dbB.init(-1, 12, true)
+	dbB.init("", -1, 12, true)
 	if dbB.numberOfHealthChecker != 2 {
 		t.Fatal("DbBalancer init fail")
 	}
 
-	dbB.init(0, 12, true)
+	dbB.init("", 0, 12, true)
 	if dbB.numberOfHealthChecker != 2 {
 		t.Fatal("DbBalancer: init fail")
 	}
 
-	dbB.init(4, 12, true)
+	dbB.init("", 4, 12, true)
 	if dbB.numberOfHealthChecker != 4 {
 		t.Fatal("DbBalancer: init fail")
 	}
@@ -417,11 +417,11 @@ func TestDbBalancer(t *testing.T) {
 	db3, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
 	db4, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
 
-	dbB.add(nil)
-	dbB.add(db1)
-	dbB.add(db2)
-	dbB.add(db3)
-	dbB.add(db4)
+	dbB.add(nil, "postgres")
+	dbB.add(db1, "postgres")
+	dbB.add(db2, "postgres")
+	dbB.add(db3, "postgres")
+	dbB.add(db4, "postgres")
 	if dbB.dbs.size != 4 {
 		t.Fatal("DbBalancer: add fail")
 	}
@@ -581,17 +581,18 @@ func TestConnectMasterSlave(t *testing.T) {
 }
 
 func TestGlobalFunc(t *testing.T) {
-	db1, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
-	db2, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
-	db3, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
-	db4, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
+	dsn := "user=test1 dbname=test1 sslmode=disable"
+	db1, _ := sqlx.Open("postgres", dsn)
+	db2, _ := sqlx.Open("postgres", dsn)
+	db3, _ := sqlx.Open("postgres", dsn)
+	db4, _ := sqlx.Open("postgres", dsn)
 
 	dbB := &dbBalancer{}
-	dbB.init(-1, 4, true)
-	dbB.add(db1)
-	dbB.add(db2)
-	dbB.add(db3)
-	dbB.add(db4)
+	dbB.init("postgres", -1, 4, true)
+	dbB.add(db1, dsn)
+	dbB.add(db2, dsn)
+	dbB.add(db3, dsn)
+	dbB.add(db4, dsn)
 	if _, err := _exec(nil, "SELECT 1"); err != ErrNoConnection {
 		t.Fatal("_exec fail")
 	}
@@ -602,38 +603,38 @@ func TestGlobalFunc(t *testing.T) {
 	dbB.destroy()
 
 	dbB = &dbBalancer{}
-	dbB.init(-1, 2, true)
-	dbB.add(db1)
-	dbB.add(db2)
+	dbB.init("postgres", -1, 2, true)
+	dbB.add(db1, dsn)
+	dbB.add(db2, dsn)
 	if _, _, err := _query(dbB, "SELECT 1"); err != ErrNoConnectionOrWsrep {
 		t.Fatal("_query fail")
 	}
 	dbB.destroy()
 
 	dbB = &dbBalancer{}
-	dbB.init(-1, 2, true)
-	dbB.add(db1)
-	dbB.add(db2)
+	dbB.init("postgres", -1, 2, true)
+	dbB.add(db1, dsn)
+	dbB.add(db2, dsn)
 	if rowx := _queryRowx(dbB, "SELECT 1"); rowx.Err() != ErrNoConnectionOrWsrep {
 		t.Fatal("_queryRowx fail")
 	}
 	dbB.destroy()
 
 	dbB = &dbBalancer{}
-	dbB.init(-1, 4, true)
-	dbB.add(db1)
-	dbB.add(db2)
-	dbB.add(db3)
-	dbB.add(db4)
+	dbB.init("postgres", -1, 4, true)
+	dbB.add(db1, dsn)
+	dbB.add(db2, dsn)
+	dbB.add(db3, dsn)
+	dbB.add(db4, dsn)
 	if _, err := _queryx(dbB, "SELECT 1"); err != ErrNoConnectionOrWsrep {
 		t.Fatal("_queryx fail")
 	}
 	dbB.destroy()
 
 	dbB = &dbBalancer{}
-	dbB.init(-1, 2, true)
-	dbB.add(db1)
-	dbB.add(db2)
+	dbB.init("postgres", -1, 2, true)
+	dbB.add(db1, dsn)
+	dbB.add(db2, dsn)
 	tmp := 1
 	if err := _get(dbB, &tmp, "SELECT 1"); err != ErrNoConnectionOrWsrep {
 		t.Fatal("_get fail")
@@ -641,9 +642,9 @@ func TestGlobalFunc(t *testing.T) {
 	dbB.destroy()
 
 	dbB = &dbBalancer{}
-	dbB.init(-1, 2, true)
-	dbB.add(db1)
-	dbB.add(db2)
+	dbB.init("postgres", -1, 2, true)
+	dbB.add(db1, dsn)
+	dbB.add(db2, dsn)
 	ano := []*Person{}
 	if err := _select(dbB, &ano, "SELECT * FROM test"); err != ErrNoConnectionOrWsrep {
 		t.Fatal("_select fail")
@@ -651,18 +652,18 @@ func TestGlobalFunc(t *testing.T) {
 	dbB.destroy()
 
 	dbB = &dbBalancer{}
-	dbB.init(-1, 2, true)
-	dbB.add(db1)
-	dbB.add(db2)
+	dbB.init("postgres", -1, 2, true)
+	dbB.add(db1, dsn)
+	dbB.add(db2, dsn)
 	if _, err := _namedExec(dbB, "DELETE FROM person WHERE first_name=:first_name", &Person{FirstName: "123"}); err != ErrNoConnectionOrWsrep {
 		t.Fatal("_namedExec fail")
 	}
 	dbB.destroy()
 
 	dbB = &dbBalancer{}
-	dbB.init(-1, 2, true)
-	dbB.add(db1)
-	dbB.add(db2)
+	dbB.init("postgres", -1, 2, true)
+	dbB.add(db1, dsn)
+	dbB.add(db2, dsn)
 	ano = []*Person{}
 	if _, err := _namedQuery(dbB, "SELECT * FROM person WHERE first_name=:first_name", &Person{FirstName: "123"}); err != ErrNoConnectionOrWsrep {
 		t.Fatal("_namedQuery fail")
