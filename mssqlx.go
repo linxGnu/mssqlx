@@ -54,6 +54,7 @@ func parseError(db *sqlx.DB, err error) error {
 // dbLinkListNode a node of linked-list contains sqlx.DB
 type dbLinkListNode struct {
 	db   *sqlx.DB
+	dsn  string
 	next *dbLinkListNode
 	prev *dbLinkListNode
 }
@@ -65,6 +66,12 @@ type DBNode interface {
 
 func (c *dbLinkListNode) GetDB() *sqlx.DB {
 	return c.db
+}
+
+// failNode represent failed node for health checking and auto reconnect
+type failNode struct {
+	db  *sqlx.DB
+	dsn string
 }
 
 // dbLinkList a round robin and thread-safe linked-list of sqlx.DB
@@ -208,8 +215,9 @@ func (c *dbLinkList) clear() {
 
 // dbBalancer database balancer and health checker.
 type dbBalancer struct {
+	driverName            string
 	dbs                   *dbLinkList
-	fail                  chan *sqlx.DB
+	fail                  chan *failNode
 	isWsrep               bool
 	_name                 string
 	numberOfHealthChecker int
@@ -223,14 +231,15 @@ type dbBalancer struct {
 }
 
 // init balancer and start health checkers
-func (c *dbBalancer) init(numHealthChecker int, numDbInstance int, isWsrep bool) {
+func (c *dbBalancer) init(driverName string, numHealthChecker int, numDbInstance int, isWsrep bool) {
 	if numHealthChecker <= 0 {
 		numHealthChecker = 2 // at least two checkers
 	}
 
+	c.driverName = driverName
 	c.numberOfHealthChecker = numHealthChecker
 	c.dbs = &dbLinkList{}
-	c.fail = make(chan *sqlx.DB, numDbInstance)
+	c.fail = make(chan *failNode, numDbInstance)
 	c.isWsrep = isWsrep
 
 	c.healthCheckPeriod = DefaultHealthCheckPeriodInMilli
@@ -244,8 +253,8 @@ func (c *dbBalancer) init(numHealthChecker int, numDbInstance int, isWsrep bool)
 }
 
 // add a db connection to handle in balancer
-func (c *dbBalancer) add(db *sqlx.DB) {
-	c.dbs.add(&dbLinkListNode{db: db})
+func (c *dbBalancer) add(db *sqlx.DB, dsn string) {
+	c.dbs.add(&dbLinkListNode{db: db, dsn: dsn})
 }
 
 // get a db to handle our query
@@ -265,7 +274,7 @@ func (c *dbBalancer) failure(node *dbLinkListNode) {
 	}()
 
 	if c.dbs.remove(node) { // remove this node
-		c.fail <- node.db // give to health checker
+		c.fail <- &failNode{db: node.db, dsn: node.dsn} // give to health checker
 	}
 }
 
@@ -324,10 +333,23 @@ func (c *dbBalancer) healthChecker() {
 	}()
 
 	var healthCheckPeriod int64
-	for db := range c.fail {
-		if err := db.Ping(); err == nil {
-			if !c.isWsrep || c.checkWsrepReady(db) { // check wresp
-				c.dbs.add(&dbLinkListNode{db: db})
+	var err error
+	for node := range c.fail {
+		if node.db == nil {
+			if node.db, err = sqlx.Connect(c.driverName, node.dsn); err != nil {
+				node.db = nil
+			}
+		}
+
+		if node.db != nil {
+			if err = node.db.Ping(); err != nil {
+				node.db.Close()
+				node.db = nil
+			} else if _, err = node.db.Exec("SELECT 1"); err != nil {
+				node.db.Close()
+				node.db = nil
+			} else if !c.isWsrep || c.checkWsrepReady(node.db) { // check wresp
+				c.dbs.add(&dbLinkListNode{db: node.db, dsn: node.dsn})
 				continue
 			}
 		}
@@ -337,7 +359,7 @@ func (c *dbBalancer) healthChecker() {
 		c.healthCheckPeriodLock.RUnlock()
 		time.Sleep(time.Duration(healthCheckPeriod) * time.Millisecond)
 
-		c.fail <- db
+		c.fail <- node
 	}
 }
 
@@ -1332,13 +1354,13 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 		}
 	}
 
-	dbs.masters.init(nMaster<<2/10, nMaster, isWsrep) // 40%
+	dbs.masters.init(driverName, nMaster<<2/10, nMaster, isWsrep) // 40%
 	dbs.masters._name = "masters"
 
-	dbs.slaves.init(nSlave<<2/10, nSlave, isWsrep) // 40%
+	dbs.slaves.init(driverName, nSlave<<2/10, nSlave, isWsrep) // 40%
 	dbs.slaves._name = "slaves"
 
-	dbs.all.init((nMaster+nSlave)<<2/10, nMaster+nSlave, isWsrep) // 40%
+	dbs.all.init(driverName, (nMaster+nSlave)<<2/10, nMaster+nSlave, isWsrep) // 40%
 	dbs.all._name = "all"
 
 	// channel to sync routines
@@ -1349,10 +1371,10 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 	for i := range masterDSNs {
 		go func(mId, eId int) {
 			dbs._masters[mId], errResult[eId] = sqlx.Connect(driverName, masterDSNs[mId])
-			dbs.masters.add(dbs._masters[mId])
+			dbs.masters.add(dbs._masters[mId], masterDSNs[mId])
 
 			dbs._all[eId] = dbs._masters[mId]
-			dbs.all.add(dbs._masters[mId])
+			dbs.all.add(dbs._masters[mId], masterDSNs[mId])
 
 			c <- 0
 		}(i, n)
@@ -1363,10 +1385,10 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 	for i := range slaveDSNs {
 		go func(sId, eId int) {
 			dbs._slaves[sId], errResult[eId] = sqlx.Connect(driverName, slaveDSNs[sId])
-			dbs.slaves.add(dbs._slaves[sId])
+			dbs.slaves.add(dbs._slaves[sId], slaveDSNs[sId])
 
 			dbs._all[eId] = dbs._slaves[sId]
-			dbs.all.add(dbs._slaves[sId])
+			dbs.all.add(dbs._slaves[sId], slaveDSNs[sId])
 
 			c <- 0
 		}(i, n)
