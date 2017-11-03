@@ -457,8 +457,8 @@ func TestDbBalancer(t *testing.T) {
 func TestConnectMasterSlave(t *testing.T) {
 	dsn, driver := "user=test1 dbname=test1 sslmode=disable", "postgres"
 
-	masterDSNs := []string{dsn}
-	slaveDSNs := []string{dsn}
+	masterDSNs := []string{dsn, dsn, dsn}
+	slaveDSNs := []string{dsn, dsn}
 
 	db, _ := ConnectMasterSlaves(driver, masterDSNs, slaveDSNs)
 	if db.DriverName() != "postgres" {
