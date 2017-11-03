@@ -206,13 +206,17 @@ func (c *dbLinkList) clear() {
 
 // dbBalancer database balancer and health checker.
 type dbBalancer struct {
-	driverName            string
-	dbs                   *dbLinkList
-	fail                  chan *sqlx.DB
-	isWsrep               bool
-	_name                 string
-	numberOfHealthChecker int
+	driverName string
 
+	dbs  *dbLinkList
+	fail chan *sqlx.DB
+
+	isWsrep bool
+	isMulti bool
+
+	_name string
+
+	numberOfHealthChecker int
 	healthCheckPeriod     int64
 	healthCheckPeriodLock sync.RWMutex
 
@@ -231,6 +235,7 @@ func (c *dbBalancer) init(numHealthChecker int, numDbInstance int, isWsrep bool)
 	c.dbs = &dbLinkList{}
 	c.fail = make(chan *sqlx.DB, numDbInstance)
 	c.isWsrep = isWsrep
+	c.isMulti = numDbInstance > 1
 
 	c.healthCheckPeriod = DefaultHealthCheckPeriodInMilli
 
@@ -927,7 +932,7 @@ func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *sqlx.R
 
 	countBadConnErr := 0
 	for {
-		db = target.get(true)
+		db = target.get(target.isMulti)
 		if db == nil {
 			if target.isWsrep {
 				return nil, ErrNoConnectionOrWsrep
@@ -1002,7 +1007,7 @@ func _namedExec(target *dbBalancer, query string, arg interface{}) (res sql.Resu
 
 	var db *dbLinkListNode
 	for {
-		db = target.get(false)
+		db = target.get(target.isMulti)
 		if db == nil {
 			if target.isWsrep {
 				return nil, ErrNoConnectionOrWsrep
@@ -1069,7 +1074,7 @@ func _query(target *dbBalancer, query string, args ...interface{}) (dbr *sqlx.DB
 
 	countBadConnErr := 0
 	for {
-		db = target.get(true)
+		db = target.get(target.isMulti)
 		if db == nil {
 			if target.isWsrep {
 				return nil, nil, ErrNoConnectionOrWsrep
@@ -1254,7 +1259,7 @@ func _exec(target *dbBalancer, query string, args ...interface{}) (res sql.Resul
 
 	var db *dbLinkListNode
 	for {
-		db = target.get(false)
+		db = target.get(target.isMulti)
 		if db == nil {
 			if target.isWsrep {
 				return nil, ErrNoConnectionOrWsrep

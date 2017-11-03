@@ -12,10 +12,11 @@ Features and concepts are:
 
 * Builtin layer/extension to [sqlx](http://jmoiron.github.io/sqlx).
 * Auto proxy for any master-slave, master-master databases. Compatible with Wsrep, Galera Cluster and others.
-* Auto and lightweight round-robin balancer of `select/show queries` on slaves (by defaults) or masters. 
-* `update/delete/insert queries` are executed on a chosen master at a time. 
-* Builtin error handling for Wsrep, Galera and some database drivers.
+* Auto and lightweight round-robin balancer for queries.
+* Builtin error handling for Wsrep, Galera and some database drivers. Retry when failed.
 * Auto health checking.
+
+For more detail of api, please refer to [godoc](https://godoc.org/github.com/linxGnu/mssqlx)
 
 ## In production
 
@@ -48,6 +49,14 @@ slaveDSNs := []string{
 }
 
 db, _ := mssqlx.ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs)
+```
+
+## Connecting to Galera Cluster
+
+Recommended to set flag as following: 
+
+```go
+db, _ := mssqlx.ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs, true)
 ```
 
 ## Configuration
