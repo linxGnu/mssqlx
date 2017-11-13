@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -913,7 +912,7 @@ func (dbs *DBs) BindNamed(query string, arg interface{}) (string, []interface{},
 
 func isErrBadConn(err error) bool {
 	return err == driver.ErrBadConn || // Postgres/Mysql Driver returns default driver.ErrBadConn
-		err == mysql.ErrInvalidConn // fix for Mysql Driver ("github.com/go-sql-driver/mysql")
+		(err != nil && err.Error() == "invalid connection") // fix for Mysql Driver ("github.com/go-sql-driver/mysql")
 }
 
 func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *sqlx.Rows, err error) {
