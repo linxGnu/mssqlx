@@ -476,6 +476,15 @@ func TestConnectMasterSlave(t *testing.T) {
 		t.Fatal("Ping fail")
 	}
 
+	// test another ping
+	for _, v := db._all {
+		if v != nil {
+			if ping(v) != nil {
+				t.Fatal("Ping fail")
+			}
+		}
+	}
+
 	// test SetHealthCheckPeriod
 	db.SetHealthCheckPeriod(200)
 	if db.masters.healthCheckPeriod != 200 || db.slaves.healthCheckPeriod != 200 {
