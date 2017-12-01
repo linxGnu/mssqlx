@@ -68,7 +68,6 @@ func ConnectMasterSlave() {
 		pgDBs, _ = ConnectMasterSlaves("postgres", masterDSNs, slaveDSNs)
 		pgDBs.SetMaxIdleConns(5)
 		pgDBs.SetMaxOpenConns(10)
-		pgDBs.SetQueryRetryTimeWhenBadConn(3, 10)
 	}
 
 	if TestWMysql {
@@ -77,7 +76,6 @@ func ConnectMasterSlave() {
 		myDBs, _ = ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs)
 		myDBs.SetMaxIdleConns(5)
 		myDBs.SetMaxOpenConns(10)
-		myDBs.SetQueryRetryTimeWhenBadConn(3, 10)
 	}
 
 	if TestWSqlite {
@@ -86,7 +84,6 @@ func ConnectMasterSlave() {
 		sqDBs, _ = ConnectMasterSlaves("sqlite3", masterDSNs, slaveDSNs)
 		sqDBs.SetMaxIdleConns(5)
 		sqDBs.SetMaxOpenConns(10)
-		sqDBs.SetQueryRetryTimeWhenBadConn(3, 10)
 	}
 }
 
@@ -491,31 +488,6 @@ func TestConnectMasterSlave(t *testing.T) {
 	db.SetMasterHealthCheckPeriod(300)
 	if db.masters.healthCheckPeriod != 300 || db.slaves.healthCheckPeriod != 200 {
 		t.Fatal("SetMasterHealthCheckPeriod fail")
-	}
-
-	db.SetQueryRetryTimeWhenBadConnOnMaster(0, 0)
-	if db.masters.retryQueryTime != DefaultQueryRetryTimeWhenDriverBadConn || db.masters.retryQueryPeriod != DefaultQueryRetryPeriodWhenDriverBadConn {
-		t.Fatal("SetQueryRetryTimeWhenBadConnOnMaster fail")
-	}
-
-	db.SetQueryRetryTimeWhenBadConnOnMaster(17, 71)
-	if db.masters.retryQueryTime != 17 || db.masters.retryQueryPeriod != 71 {
-		t.Fatal("SetQueryRetryTimeWhenBadConnOnMaster fail")
-	}
-
-	db.SetSlaveHealthCheckPeriod(400)
-	if db.masters.healthCheckPeriod != 300 || db.slaves.healthCheckPeriod != 400 {
-		t.Fatal("SetSlaveHealthCheckPeriod fail")
-	}
-
-	db.SetQueryRetryTimeWhenBadConnOnSlave(0, 0)
-	if db.slaves.retryQueryTime != DefaultQueryRetryTimeWhenDriverBadConn || db.slaves.retryQueryPeriod != DefaultQueryRetryPeriodWhenDriverBadConn {
-		t.Fatal("SetQueryRetryTimeWhenBadConnOnSlave fail")
-	}
-
-	db.SetQueryRetryTimeWhenBadConnOnSlave(17, 71)
-	if db.slaves.retryQueryTime != 17 || db.slaves.retryQueryPeriod != 71 {
-		t.Fatal("SetQueryRetryTimeWhenBadConnOnSlave fail")
 	}
 
 	// test set idle connection

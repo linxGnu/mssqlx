@@ -13,7 +13,7 @@ Features and concepts are:
 * Builtin layer/extension to [sqlx](http://jmoiron.github.io/sqlx).
 * Auto proxy for any master-slave, master-master databases. Compatible with Wsrep, Galera Cluster and others.
 * Auto and lightweight round-robin balancer for queries.
-* Builtin error handling for Wsrep, Galera and some database drivers. Retry when failed.
+* Builtin error handling for Wsrep, Galera and some database drivers. Auto-retry when detected bad connection causing by DBMS's timeout policy which auto-close non interactive/timeout connection.
 * Auto health checking.
 
 For more detail of api, please refer to [godoc](https://godoc.org/github.com/linxGnu/mssqlx)
