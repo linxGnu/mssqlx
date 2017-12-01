@@ -477,11 +477,9 @@ func TestConnectMasterSlave(t *testing.T) {
 	}
 
 	// test another ping
-	for _, v := db._all {
-		if v != nil {
-			if ping(v) != nil {
-				t.Fatal("Ping fail")
-			}
+	for _, v := range db._all {
+		if v != nil && ping(v) != nil {
+			t.Fatal("Ping fail")
 		}
 	}
 

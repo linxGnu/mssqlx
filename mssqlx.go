@@ -306,9 +306,8 @@ func (c *dbBalancer) healthChecker() {
 	}()
 
 	var healthCheckPeriod int64
-	var err error
 	for db := range c.fail {
-		if _, err = db.Exec("SELECT 1"); err == nil && (!c.isWsrep || c.checkWsrepReady(db)) {
+		if ping(db) == nil && (!c.isWsrep || c.checkWsrepReady(db)) {
 			c.dbs.add(&dbLinkListNode{db: db})
 			continue
 		}
