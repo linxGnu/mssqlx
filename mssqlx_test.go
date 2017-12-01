@@ -1508,3 +1508,21 @@ func Test_EmbeddedLiterals(t *testing.T) {
 		}
 	})
 }
+
+func Test_ErrBadConnChecker(t *testing.T) {
+	if isErrBadConn(nil) {
+		t.Fail("Check err bad conn failed")
+	}
+
+	if err := fmt.Errorf("bad connection"); !isErrBadConn(err) {
+		t.Fail("Check err bad conn failed")
+	}
+
+	if err := fmt.Errorf("invalid connection"); !isErrBadConn(err) {
+		t.Fail("Check err bad conn failed")
+	}
+
+	if err := fmt.Errorf("invalid connections"); isErrBadConn(err) {
+		t.Fail("Check err bad conn failed")
+	}
+}

@@ -850,9 +850,20 @@ func (dbs *DBs) BindNamed(query string, arg interface{}) (string, []interface{},
 	return "", nil, nil
 }
 
+func isBadConn(errMessage string) bool {
+	switch errMessage {
+	case "invalid connection":
+		return true
+	case "bad connection":
+		return true
+	}
+
+	return false
+}
+
 func isErrBadConn(err error) bool {
 	return err == driver.ErrBadConn || // Postgres/Mysql Driver returns default driver.ErrBadConn
-		(err != nil && err.Error() == "invalid connection") // fix for Mysql Driver ("github.com/go-sql-driver/mysql")
+		(err != nil && isBadConn(err.Error())) // fix for Mysql Driver ("github.com/go-sql-driver/mysql")
 }
 
 func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *sqlx.Rows, err error) {
@@ -948,17 +959,12 @@ func _namedExec(target *dbBalancer, query string, arg interface{}) (res sql.Resu
 		if db.db == nil {
 			target.failure(db)
 			continue
+		} else {
+			// try to ping db first. Tradeoff a little performance for auto-reset db connection when DBMS restarted
+			ping(db.db)
 		}
 
 		r, e := db.db.NamedExec(query, arg)
-
-		// detect driver.ErrBadConn occurring when a connection idle for a long time.
-		// this prevents returning driver.ErrBadConn to application.
-		if isErrBadConn(e) {
-			if ping(db.db) == nil {
-				r, e = db.db.NamedExec(query, arg)
-			}
-		}
 
 		if e = parseError(db.db, e); e == ErrNetwork {
 			target.failure(db)
@@ -1189,17 +1195,12 @@ func _exec(target *dbBalancer, query string, args ...interface{}) (res sql.Resul
 		if db.db == nil {
 			target.failure(db)
 			continue
+		} else {
+			// try to ping db first. Tradeoff a little performance for auto-reset db connection when DBMS restarted
+			ping(db.db)
 		}
 
 		r, e := db.db.Exec(query, args...)
-
-		// detect driver.ErrBadConn occurring when a connection idle for a long time.
-		// this prevents returning driver.ErrBadConn to application.
-		if isErrBadConn(e) {
-			if ping(db.db) == nil {
-				r, e = db.db.Exec(query, args...)
-			}
-		}
 
 		if e = parseError(db.db, e); e == ErrNetwork {
 			target.failure(db)
