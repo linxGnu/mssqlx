@@ -25,7 +25,7 @@ var (
 
 const (
 	// DefaultHealthCheckPeriodInMilli default period in millisecond mssqlx should do a health check of failed database
-	DefaultHealthCheckPeriodInMilli = 50
+	DefaultHealthCheckPeriodInMilli = 40
 )
 
 func ping(db *sqlx.DB) (err error) {
@@ -318,7 +318,7 @@ func (c *dbBalancer) healthChecker() {
 			continue
 		}
 
-		time.Sleep(time.Duration(c.getHealthCheckPeriod()) * time.Millisecond * 2)
+		time.Sleep(time.Duration(c.getHealthCheckPeriod()) * time.Millisecond)
 
 		c.fail <- db
 	}
@@ -874,8 +874,8 @@ func getDBFromBalancer(target *dbBalancer) (db *dbLinkListNode, err error) {
 		return
 	}
 
-	// retry 3 time
-	for i := 0; i < 3; i++ {
+	// retry if there is no connection available. This event could happen when database closes all non-interactive connection.
+	for i := 0; i < 4; i++ {
 		time.Sleep(time.Duration(target.getHealthCheckPeriod()) * time.Millisecond)
 		if db = target.get(target.isMulti); db != nil {
 			return
