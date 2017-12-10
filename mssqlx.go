@@ -25,7 +25,7 @@ var (
 
 const (
 	// DefaultHealthCheckPeriodInMilli default period in millisecond mssqlx should do a health check of failed database
-	DefaultHealthCheckPeriodInMilli = 500
+	DefaultHealthCheckPeriodInMilli = 50
 )
 
 func ping(db *sqlx.DB) (err error) {
@@ -298,6 +298,13 @@ func (c *dbBalancer) checkWsrepReady(db *sqlx.DB) bool {
 	return true
 }
 
+func (c *dbBalancer) getHealthCheckPeriod() int64 {
+	c.healthCheckPeriodLock.RLock()
+	defer c.healthCheckPeriodLock.RUnlock()
+
+	return c.healthCheckPeriod
+}
+
 // healthChecker daemon to check health of db connection
 func (c *dbBalancer) healthChecker() {
 	defer func() {
@@ -305,17 +312,13 @@ func (c *dbBalancer) healthChecker() {
 		}
 	}()
 
-	var healthCheckPeriod int64
 	for db := range c.fail {
 		if ping(db) == nil && (!c.isWsrep || c.checkWsrepReady(db)) {
 			c.dbs.add(&dbLinkListNode{db: db})
 			continue
 		}
 
-		c.healthCheckPeriodLock.RLock()
-		healthCheckPeriod = c.healthCheckPeriod
-		c.healthCheckPeriodLock.RUnlock()
-		time.Sleep(time.Duration(healthCheckPeriod) * time.Millisecond)
+		time.Sleep(time.Duration(c.getHealthCheckPeriod()) * time.Millisecond * 2)
 
 		c.fail <- db
 	}
@@ -866,6 +869,27 @@ func isErrBadConn(err error) bool {
 		(err != nil && isBadConn(err.Error())) // fix for Mysql Driver ("github.com/go-sql-driver/mysql")
 }
 
+func getDBFromBalancer(target *dbBalancer) (db *dbLinkListNode, err error) {
+	if db = target.get(target.isMulti); db != nil {
+		return
+	}
+
+	// retry 3 time
+	for i := 0; i < 3; i++ {
+		time.Sleep(time.Duration(target.getHealthCheckPeriod()) * time.Millisecond)
+		if db = target.get(target.isMulti); db != nil {
+			return
+		}
+	}
+
+	// need to return error
+	if target.isWsrep {
+		return nil, ErrNoConnectionOrWsrep
+	}
+
+	return nil, ErrNoConnection
+}
+
 func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *sqlx.Rows, err error) {
 	defer func() {
 		if e := recover(); e != nil {
@@ -881,13 +905,8 @@ func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *sqlx.R
 	var db *dbLinkListNode
 
 	for {
-		db = target.get(target.isMulti)
-		if db == nil {
-			if target.isWsrep {
-				return nil, ErrNoConnectionOrWsrep
-			}
-
-			return nil, ErrNoConnection
+		if db, err = getDBFromBalancer(target); err != nil {
+			return
 		}
 
 		if db.db == nil {
@@ -947,13 +966,8 @@ func _namedExec(target *dbBalancer, query string, arg interface{}) (res sql.Resu
 
 	var db *dbLinkListNode
 	for {
-		db = target.get(target.isMulti)
-		if db == nil {
-			if target.isWsrep {
-				return nil, ErrNoConnectionOrWsrep
-			}
-
-			return nil, ErrNoConnection
+		if db, err = getDBFromBalancer(target); err != nil {
+			return
 		}
 
 		if db.db == nil {
@@ -1007,13 +1021,8 @@ func _query(target *dbBalancer, query string, args ...interface{}) (dbr *sqlx.DB
 	var db *dbLinkListNode
 
 	for {
-		db = target.get(target.isMulti)
-		if db == nil {
-			if target.isWsrep {
-				return nil, nil, ErrNoConnectionOrWsrep
-			}
-
-			return nil, nil, ErrNoConnection
+		if db, err = getDBFromBalancer(target); err != nil {
+			return
 		}
 
 		if db.db == nil {
@@ -1183,13 +1192,8 @@ func _exec(target *dbBalancer, query string, args ...interface{}) (res sql.Resul
 
 	var db *dbLinkListNode
 	for {
-		db = target.get(target.isMulti)
-		if db == nil {
-			if target.isWsrep {
-				return nil, ErrNoConnectionOrWsrep
-			}
-
-			return nil, ErrNoConnection
+		if db, err = getDBFromBalancer(target); err != nil {
+			return
 		}
 
 		if db.db == nil {
