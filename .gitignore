@@ -28,3 +28,4 @@ environ
 vendor
 vendor.conf
 coverage.out
+*DS_Store

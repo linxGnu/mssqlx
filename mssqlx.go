@@ -1,6 +1,7 @@
 package mssqlx
 
 import (
+	"context"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
@@ -329,15 +330,15 @@ func (c *dbBalancer) destroy() {
 	close(c.fail)
 }
 
-// DBs sqlx wrapper supports querying master-slave database instances for HA and scalability, auto-balancer integrated.
+// DBs sqlx wrapper supports querying master-slave database connections for HA and scalability, auto-balancer integrated.
 type DBs struct {
 	driverName string
 
-	// master instances
+	// master connections
 	masters  *dbBalancer
 	_masters []*sqlx.DB
 
-	// slaves instances
+	// slaves connections
 	slaves  *dbBalancer
 	_slaves []*sqlx.DB
 
@@ -345,7 +346,7 @@ type DBs struct {
 	masterLock sync.RWMutex
 	slaveLock  sync.RWMutex
 
-	// store all database instances
+	// store all database connections
 	all  *dbBalancer
 	_all []*sqlx.DB
 }
@@ -355,12 +356,12 @@ func (dbs *DBs) DriverName() string {
 	return dbs.driverName
 }
 
-// GetMaster get master database instance from balancer
-func (dbs *DBs) GetMaster() (DBNode, int) {
-	return dbs.masters.get(false), len(dbs._masters)
+// GetAllMasters get all master database connections, included failing one.
+func (dbs *DBs) GetAllMasters() ([]*sqlx.DB, int) {
+	return dbs._masters, len(dbs._masters)
 }
 
-// GetAllSlaves get all slave database instances
+// GetAllSlaves get all slave database connections, included failing one.
 func (dbs *DBs) GetAllSlaves() ([]*sqlx.DB, int) {
 	return dbs._slaves, len(dbs._slaves)
 }
@@ -392,17 +393,17 @@ func _ping(target []*sqlx.DB) []error {
 	return errResult
 }
 
-// Ping all master-slave database instances
+// Ping all master-slave database connections
 func (dbs *DBs) Ping() []error {
 	return _ping(dbs._all)
 }
 
-// PingMaster all master database instances
+// PingMaster all master database connections
 func (dbs *DBs) PingMaster() []error {
 	return _ping(dbs._masters)
 }
 
-// PingSlave all slave database instances
+// PingSlave all slave database connections
 func (dbs *DBs) PingSlave() []error {
 	return _ping(dbs._slaves)
 }
@@ -434,7 +435,7 @@ func _close(target []*sqlx.DB) []error {
 	return errResult
 }
 
-// Destroy closes all database instances, releasing any open resources.
+// Destroy closes all database connections, releasing any open resources.
 //
 // It is rare to Close a DB, as the DB handle is meant to be
 // long-lived and shared between many goroutines.
@@ -459,7 +460,7 @@ func (dbs *DBs) Destroy() []error {
 	return res
 }
 
-// DestroyMaster closes all master database instances, releasing any open resources.
+// DestroyMaster closes all master database connections, releasing any open resources.
 //
 // It is rare to Close a DB, as the DB handle is meant to be
 // long-lived and shared between many goroutines.
@@ -474,7 +475,7 @@ func (dbs *DBs) DestroyMaster() []error {
 	return _close(dbs._masters)
 }
 
-// DestroySlave closes all master database instances, releasing any open resources.
+// DestroySlave closes all master database connections, releasing any open resources.
 //
 // It is rare to Close a DB, as the DB handle is meant to be
 // long-lived and shared between many goroutines.
@@ -1217,6 +1218,114 @@ func _exec(target *dbBalancer, query string, args ...interface{}) (res sql.Resul
 		}
 
 		return r, e
+	}
+}
+
+// MustBegin starts a transaction, and panics on error.  Returns an *sqlx.Tx instead
+// of an *sql.Tx.
+// Transaction is bound to one of master connections.
+func (dbs *DBs) MustBegin() *sqlx.Tx {
+	tx, err := dbs.Beginx()
+	if err != nil {
+		panic(err)
+	}
+	return tx
+}
+
+// MustBeginTx starts a transaction, and panics on error.  Returns an *sqlx.Tx instead
+// of an *sql.Tx.
+//
+// The provided context is used until the transaction is committed or rolled
+// back. If the context is canceled, the sql package will roll back the
+// transaction. Tx.Commit will return an error if the context provided to
+// MustBeginContext is canceled.
+//
+// Transaction is bound to one of master connections.
+func (dbs *DBs) MustBeginTx(ctx context.Context, opts *sql.TxOptions) *sqlx.Tx {
+	tx, err := dbs.BeginTxx(ctx, opts)
+	if err != nil {
+		panic(err)
+	}
+	return tx
+}
+
+// Begin starts a transaction. The default isolation level is dependent on
+// the driver.
+//
+// Transaction is bound to one of master connections.
+func (dbs *DBs) Begin() (*sql.Tx, error) {
+	return dbs.BeginTx(context.Background(), nil)
+}
+
+// BeginTx starts a transaction.
+//
+// The provided context is used until the transaction is committed or rolled back.
+// If the context is canceled, the sql package will roll back
+// the transaction. Tx.Commit will return an error if the context provided to
+// BeginTx is canceled.
+//
+// The provided TxOptions is optional and may be nil if defaults should be used.
+// If a non-default isolation level is used that the driver doesn't support,
+// an error will be returned.
+//
+// Transaction is bound to one of master connections.
+func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	for {
+		db, err := getDBFromBalancer(dbs.masters)
+		if err != nil {
+			return nil, err
+		}
+
+		if db.db == nil {
+			dbs.masters.failure(db)
+			continue
+		}
+
+		return db.db.BeginTx(ctx, opts)
+	}
+}
+
+// Beginx begins a transaction and returns an *sqlx.Tx instead of an *sql.Tx.
+//
+// Transaction is bound to one of master connections.
+func (dbs *DBs) Beginx() (*sqlx.Tx, error) {
+	for {
+		db, err := getDBFromBalancer(dbs.masters)
+		if err != nil {
+			return nil, err
+		}
+
+		if db.db == nil {
+			dbs.masters.failure(db)
+			continue
+		}
+
+		return db.db.Beginx()
+	}
+}
+
+// BeginTxx begins a transaction and returns an *sqlx.Tx instead of an
+// *sql.Tx.
+//
+// The provided context is used until the transaction is committed or rolled
+// back. If the context is canceled, the sql package will roll back the
+// transaction. Tx.Commit will return an error if the context provided to
+// BeginxContext is canceled.
+//
+// Transaction is bound to one of master connections.
+func (dbs *DBs) BeginTxx(ctx context.Context, opts *sql.TxOptions) (*sqlx.Tx, error) {
+	for {
+		db, err := getDBFromBalancer(dbs.masters)
+		if err != nil {
+			return nil, err
+		}
+
+		if db.db == nil {
+			dbs.masters.failure(db)
+			continue
+		}
+
+		return db.db.BeginTxx(ctx, opts)
 	}
 }
 

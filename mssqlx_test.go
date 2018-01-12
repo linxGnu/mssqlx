@@ -232,24 +232,21 @@ func _RunWithSchema(schema Schema, t *testing.T, test func(db *DBs, t *testing.T
 }
 
 func _loadDefaultFixture(db *DBs, t *testing.T) {
-	master, num := db.GetMaster()
-	if num > 0 {
-		tx := master.GetDB().MustBegin()
-		tx.MustExec(tx.Rebind("INSERT INTO person (first_name, last_name, email) VALUES (?, ?, ?)"), "Jason", "Moiron", "jmoiron@jmoiron.net")
-		tx.MustExec(tx.Rebind("INSERT INTO person (first_name, last_name, email) VALUES (?, ?, ?)"), "John", "Doe", "johndoeDNE@gmail.net")
-		tx.MustExec(tx.Rebind("INSERT INTO place (country, city, telcode) VALUES (?, ?, ?)"), "United States", "New York", "1")
-		tx.MustExec(tx.Rebind("INSERT INTO place (country, telcode) VALUES (?, ?)"), "Hong Kong", "852")
-		tx.MustExec(tx.Rebind("INSERT INTO place (country, telcode) VALUES (?, ?)"), "Singapore", "65")
-		if db.DriverName() == "mysql" {
-			tx.MustExec(tx.Rebind("INSERT INTO capplace (`COUNTRY`, `TELCODE`) VALUES (?, ?)"), "Sarf Efrica", "27")
-		} else {
-			tx.MustExec(tx.Rebind("INSERT INTO capplace (\"COUNTRY\", \"TELCODE\") VALUES (?, ?)"), "Sarf Efrica", "27")
-		}
-		tx.MustExec(tx.Rebind("INSERT INTO employees (name, id) VALUES (?, ?)"), "Peter", "4444")
-		tx.MustExec(tx.Rebind("INSERT INTO employees (name, id, boss_id) VALUES (?, ?, ?)"), "Joe", "1", "4444")
-		tx.MustExec(tx.Rebind("INSERT INTO employees (name, id, boss_id) VALUES (?, ?, ?)"), "Martin", "2", "4444")
-		tx.Commit()
+	tx := db.MustBegin()
+	tx.MustExec(tx.Rebind("INSERT INTO person (first_name, last_name, email) VALUES (?, ?, ?)"), "Jason", "Moiron", "jmoiron@jmoiron.net")
+	tx.MustExec(tx.Rebind("INSERT INTO person (first_name, last_name, email) VALUES (?, ?, ?)"), "John", "Doe", "johndoeDNE@gmail.net")
+	tx.MustExec(tx.Rebind("INSERT INTO place (country, city, telcode) VALUES (?, ?, ?)"), "United States", "New York", "1")
+	tx.MustExec(tx.Rebind("INSERT INTO place (country, telcode) VALUES (?, ?)"), "Hong Kong", "852")
+	tx.MustExec(tx.Rebind("INSERT INTO place (country, telcode) VALUES (?, ?)"), "Singapore", "65")
+	if db.DriverName() == "mysql" {
+		tx.MustExec(tx.Rebind("INSERT INTO capplace (`COUNTRY`, `TELCODE`) VALUES (?, ?)"), "Sarf Efrica", "27")
+	} else {
+		tx.MustExec(tx.Rebind("INSERT INTO capplace (\"COUNTRY\", \"TELCODE\") VALUES (?, ?)"), "Sarf Efrica", "27")
 	}
+	tx.MustExec(tx.Rebind("INSERT INTO employees (name, id) VALUES (?, ?)"), "Peter", "4444")
+	tx.MustExec(tx.Rebind("INSERT INTO employees (name, id, boss_id) VALUES (?, ?, ?)"), "Joe", "1", "4444")
+	tx.MustExec(tx.Rebind("INSERT INTO employees (name, id, boss_id) VALUES (?, ?, ?)"), "Martin", "2", "4444")
+	tx.Commit()
 }
 
 func TestParseError(t *testing.T) {
@@ -523,8 +520,8 @@ func TestConnectMasterSlave(t *testing.T) {
 			t.Fatal("_ping fail")
 		}
 	}
-	if _, c := db.GetMaster(); c != 3 {
-		t.Fatal("GetMaster fail")
+	if _, c := db.GetAllMasters(); c != 3 {
+		t.Fatal("GetAllMasters fail")
 	}
 
 	// test destroy master / slave
@@ -536,7 +533,7 @@ func TestConnectMasterSlave(t *testing.T) {
 	}
 
 	db, _ = ConnectMasterSlaves(driver, masterDSNs, slaveDSNs, true)
-	if _, c := db.GetMaster(); c != 3 {
+	if _, c := db.GetAllMasters(); c != 3 {
 		t.Fatal("Initialize master slave fail")
 	}
 	if _, c := db.GetAllSlaves(); c != 2 {
@@ -549,7 +546,7 @@ func TestConnectMasterSlave(t *testing.T) {
 	}
 
 	db, _ = ConnectMasterSlaves(driver, nil, slaveDSNs, true)
-	if _, c := db.GetMaster(); c != 0 {
+	if _, c := db.GetAllMasters(); c != 0 {
 		t.Fatal("Initialize master slave fail")
 	}
 
