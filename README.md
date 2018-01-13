@@ -139,34 +139,31 @@ result, err := db.Exec("DELETE FROM person WHERE id < ?", 100)
 
 ```go
 // Recommended write transaction this way
-master, total := db.GetMaster()
-if total > 0 && master != nil {
-    tx, e := master.GetDB().Begin()
-    if e != nil {
-	    return e
-    }
+tx, e := db.Begin()
+if e != nil {
+	return e
+}
     
-    shouldAutoRollBack := true
-    defer func() {
-		if e := recover(); e != nil {
-			err = fmt.Errorf("%v", e)
-			tx.Rollback()
-		} else if err != nil && shouldAutoRollBack {
-			tx.Rollback()
-		}
-	}()
+shouldAutoRollBack := true
+defer func() {
+	if e := recover(); e != nil {
+		err = fmt.Errorf("%v", e)
+		tx.Rollback()
+	} else if err != nil && shouldAutoRollBack {
+		tx.Rollback()
+	}
+}()
 			
-    if _, err = tx.Exec("INSERT INTO person(first_name, last_name, email, data) VALUES (?,?,?,?)", "Jon", "Dow", "jon@gmail", []byte{1, 2}); err != nil {
+if _, err = tx.Exec("INSERT INTO person(first_name, last_name, email, data) VALUES (?,?,?,?)", "Jon", "Dow", "jon@gmail", []byte{1, 2}); err != nil {
         return
-    }
+}
     
-    if _, err = tx.Exec("INSERT INTO person(first_name, last_name, email, data) VALUES (?,?,?,?)", "Jon", "Snow", "snow@gmail", []byte{1}); err != nil {
-        return
-    }
+if _, err = tx.Exec("INSERT INTO person(first_name, last_name, email, data) VALUES (?,?,?,?)", "Jon", "Snow", "snow@gmail", []byte{1}); err != nil {
+    return
+}
 			
-    if err = tx.Commit(); err != nil {
-        shouldAutoRollBack = false
-    }
+if err = tx.Commit(); err != nil {
+    shouldAutoRollBack = false
 }
 ```
 
