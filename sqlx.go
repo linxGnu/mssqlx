@@ -189,15 +189,13 @@ func (r *Row) Scan(dest ...interface{}) error {
 		}
 		return sql.ErrNoRows
 	}
-	err := r.rows.Scan(dest...)
-	if err != nil {
+
+	if err := r.rows.Scan(dest...); err != nil {
 		return err
 	}
+
 	// Make sure the query can be processed to completion with no errors.
-	if err := r.rows.Close(); err != nil {
-		return err
-	}
-	return nil
+	return r.rows.Close()
 }
 
 // Columns returns the underlying sql.Rows.Columns(), or the deferred error usually
