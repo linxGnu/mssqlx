@@ -99,7 +99,9 @@ func (s Schema) Postgres() (string, string) {
 }
 
 func (s Schema) MySQL() (string, string) {
-	return strings.Replace(s.create, `"`, "`", -1), s.drop
+	f1 := strings.Replace(s.create, `"`, "`", -1)
+	f2 := strings.Replace(f1, "now()", "CURRENT_TIMESTAMP", -1)
+	return f2, s.drop
 }
 
 func (s Schema) Sqlite3() (string, string) {
