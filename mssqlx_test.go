@@ -2026,12 +2026,17 @@ func TestStressQueries(t *testing.T) {
 			}
 		}
 
-		for i := 1; i <= 30; i++ {
+		limit := 50
+		if db == sqDBs {
+			limit = 5
+		}
+
+		for i := 1; i <= limit; i++ {
 			wg.Add(1)
 			go worker(&wg)
 		}
 
-		for i := 0; i < 60; i++ {
+		for i := 0; i < limit*2; i++ {
 			ch <- true
 		}
 		close(ch)
