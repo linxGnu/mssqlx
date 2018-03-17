@@ -6,6 +6,7 @@ go:
 - "1.10"
 
 services:
+- mysql
 - sqlite3
 
 addons:
@@ -13,10 +14,13 @@ addons:
 
 env:
   global:
+  - MSSQLX_MYSQL_DSN="test:test@tcp(localhost:3306)/test"
   - MSSQLX_POSTGRES_DSN="user=test password=test dbname=test sslmode=disable"
   - MSSQLX_SQLITE_DSN=test.db
 
 before_script:
+- mysql -e "CREATE DATABASE test;"
+- mysql -u root -e "GRANT ALL ON test.* TO test@localhost IDENTIFIED BY 'test'"
 - psql -c "CREATE DATABASE test;" -U postgres
 - psql -c "CREATE USER "test" WITH SUPERUSER PASSWORD 'test';" -U postgres
 - go get github.com/lib/pq

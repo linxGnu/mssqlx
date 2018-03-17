@@ -6,7 +6,7 @@
 [![godoc](https://img.shields.io/badge/docs-GoDoc-green.svg)](https://godoc.org/github.com/linxGnu/mssqlx)
 [![license](http://img.shields.io/badge/license-MIT-red.svg?style=flat)](https://raw.githubusercontent.com/jmoiron/sqlx/master/LICENSE)
 
-Embeddable, high availability, performance and lightweight database client library. Support go1.7 or newer.
+Embeddable, high availability, performance and lightweight database client library. Support go 1.8 or newer.
 
 Features and concepts are:
 
