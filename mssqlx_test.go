@@ -112,7 +112,7 @@ CREATE TABLE person (
 	first_name text,
 	last_name text,
 	email text,
-	added_at datetime default now()
+	added_at date default now()
 );
 CREATE TABLE place (
 	country text,
