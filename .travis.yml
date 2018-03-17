@@ -7,7 +7,6 @@ go:
 
 services:
 - mysql
-- sqlite3
 
 addons:
   postgresql: "9.6"
@@ -16,7 +15,6 @@ env:
   global:
   - MSSQLX_MYSQL_DSN="test:test@tcp(localhost:3306)/test"
   - MSSQLX_POSTGRES_DSN="user=test password=test dbname=test sslmode=disable"
-  - MSSQLX_SQLITE_DSN=test.db
 
 before_script:
 - mysql -e "CREATE DATABASE test;"
