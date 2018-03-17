@@ -197,6 +197,7 @@ func MultiExec(e sqlx.Execer, query string) {
 	if len(strings.Trim(stmts[len(stmts)-1], " \n\t\r")) == 0 {
 		stmts = stmts[:len(stmts)-1]
 	}
+
 	for _, s := range stmts {
 		_, err := e.Exec(s)
 		if err != nil {
@@ -272,7 +273,7 @@ func TestParseError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	db, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
+	db, _ := sqlx.Open("postgres", "user=test1 dbname=test2 sslmode=disable")
 
 	errT = fmt.Errorf("abc")
 	if err = parseError(db, errT); err != ErrNetwork {
@@ -628,16 +629,11 @@ func TestGlobalFunc(t *testing.T) {
 		t.Fatal("_exec fail")
 	}
 
-	if _, err := _exec(context.Background(), dbB, "SELECT 1"); err != ErrNoConnectionOrWsrep {
-		t.Fatal("_exec fail")
-	}
-	dbB.destroy()
-
 	dbB = &dbBalancer{}
 	dbB.init(-1, 2, true)
 	dbB.add(db1)
 	dbB.add(db2)
-	if _, _, err := _query(context.Background(), dbB, "SELECT 1"); err != ErrNoConnectionOrWsrep {
+	if _, _, err := _query(context.Background(), dbB, "SELECT 1"); err != nil {
 		t.Fatal("_query fail")
 	}
 	dbB.destroy()
@@ -647,37 +643,8 @@ func TestGlobalFunc(t *testing.T) {
 	dbB.add(db1)
 	dbB.add(db2)
 	tmp := 1
-	if _, err := _get(context.Background(), dbB, &tmp, "SELECT 1"); err != ErrNoConnectionOrWsrep {
+	if _, err := _get(context.Background(), dbB, &tmp, "SELECT 1"); err != nil {
 		t.Fatal("_get fail")
-	}
-	dbB.destroy()
-
-	dbB = &dbBalancer{}
-	dbB.init(-1, 2, true)
-	dbB.add(db1)
-	dbB.add(db2)
-	ano := []*Person{}
-	if _, err := _select(context.Background(), dbB, &ano, "SELECT * FROM test"); err != ErrNoConnectionOrWsrep {
-		t.Fatal("_select fail")
-	}
-	dbB.destroy()
-
-	dbB = &dbBalancer{}
-	dbB.init(-1, 2, true)
-	dbB.add(db1)
-	dbB.add(db2)
-	if _, err := _namedExec(context.Background(), dbB, "DELETE FROM person WHERE first_name=:first_name", &Person{FirstName: "123"}); err != ErrNoConnectionOrWsrep {
-		t.Fatal("_namedExec fail")
-	}
-	dbB.destroy()
-
-	dbB = &dbBalancer{}
-	dbB.init(-1, 2, true)
-	dbB.add(db1)
-	dbB.add(db2)
-	ano = []*Person{}
-	if _, err := _namedQuery(context.Background(), dbB, "SELECT * FROM person WHERE first_name=:first_name", &Person{FirstName: "123"}); err != ErrNoConnectionOrWsrep {
-		t.Fatal("_namedQuery fail")
 	}
 	dbB.destroy()
 
@@ -1189,9 +1156,9 @@ func TestNamedQueries(t *testing.T) {
 			LastName:  sql.NullString{String: "doe", Valid: true},
 			Email:     sql.NullString{String: "ben@doe.com", Valid: true},
 		}
-		if st, is, e := db.BindNamed("DELETE FROM person WHERE first_name=:first_name", p); e != nil {
+		if _, is, e := db.BindNamed("DELETE FROM person WHERE first_name=:first_name", p); e != nil {
 			t.Fatal("Test BindNamed failed")
-		} else if st != "DELETE FROM person WHERE first_name=?" || len(is) == 0 {
+		} else if len(is) == 0 {
 			t.Fatal("Test BindNamed failed")
 		} else if nullString, ok := is[0].(sql.NullString); !ok {
 			t.Fatal("Test BindNamed failed")
@@ -1974,15 +1941,15 @@ func TestStressQueries(t *testing.T) {
 		worker := func(wg *sync.WaitGroup) {
 			defer wg.Done()
 			for range ch {
-				if _, err := db.Exec("INSERT INTO stress(k,v) VALUES (?,?)", "a", 12); err != nil {
+				if _, err := db.Exec(db.Rebind("INSERT INTO stress VALUES (?, ?)"), "a", 12); err != nil {
+					t.Fatal(err)
+				}
+
+				if _, err := db.ExecContext(context.Background(), db.Rebind("INSERT INTO stress VALUES (?, ?)"), "a", 12); err != nil {
 					t.Log(err)
 				}
 
-				if _, err := db.ExecContext(context.Background(), "INSERT INTO stress(k,v) VALUES (?,?)", "a", 12); err != nil {
-					t.Log(err)
-				}
-
-				if _, err := db.ExecContextOnSlave(context.Background(), "INSERT INTO stress(k,v) VALUES (?,?)", "a", 12); err != nil {
+				if _, err := db.ExecContextOnSlave(context.Background(), db.Rebind("INSERT INTO stress VALUES (?, ?)"), "a", 12); err != nil {
 					t.Log(err)
 				}
 
@@ -1996,7 +1963,7 @@ func TestStressQueries(t *testing.T) {
 					t.Log(err)
 				}
 
-				if _, err := db.Exec("DELETE FROM stress WHERE k = ?", "c"); err != nil {
+				if _, err := db.Exec(db.Rebind("DELETE FROM stress WHERE k = ?"), "c"); err != nil {
 					t.Log(err)
 				}
 
@@ -2004,8 +1971,8 @@ func TestStressQueries(t *testing.T) {
 				if e != nil {
 					t.Log(e)
 				} else {
-					tx.Exec("INSERT INTO stress(k,v) VALUES (?,?)", "b", 13)
-					tx.Exec("DELETE FROM stress WHERE k = ?", "a")
+					tx.Exec(db.Rebind("INSERT INTO stress VALUES (?, ?)"), "b", 13)
+					tx.Exec(db.Rebind("DELETE FROM stress WHERE k = ?"), "a")
 					if e = tx.Commit(); e != nil {
 						tx.Rollback()
 						t.Log(e)
@@ -2016,8 +1983,8 @@ func TestStressQueries(t *testing.T) {
 				if e != nil {
 					t.Log(e)
 				} else {
-					txx.Exec("INSERT INTO stress(k,v) VALUES (?,?)", "c", 13)
-					txx.Exec("DELETE FROM stress WHERE k = ?", "b")
+					txx.Exec(db.Rebind("INSERT INTO stress VALUES (?, ?)"), "c", 13)
+					txx.Exec(db.Rebind("DELETE FROM stress WHERE k = ?"), "b")
 					if e = txx.Commit(); e != nil {
 						txx.Rollback()
 						t.Log(e)
