@@ -11,11 +11,13 @@
 package mssqlx
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -110,7 +112,7 @@ CREATE TABLE person (
 	first_name text,
 	last_name text,
 	email text,
-	added_at timestamp default now()
+	added_at datetime default now()
 );
 CREATE TABLE place (
 	country text,
@@ -190,7 +192,7 @@ type SliceMember struct {
 	Addresses []Place  `db:"-"`
 }
 
-func MultiExec(e Execer, query string) {
+func MultiExec(e sqlx.Execer, query string) {
 	stmts := strings.Split(query, ";\n")
 	if len(strings.Trim(stmts[len(stmts)-1], " \n\t\r")) == 0 {
 		stmts = stmts[:len(stmts)-1]
@@ -232,21 +234,31 @@ func _RunWithSchema(schema Schema, t *testing.T, test func(db *DBs, t *testing.T
 }
 
 func _loadDefaultFixture(db *DBs, t *testing.T) {
-	tx := db.MustBegin()
-	tx.MustExec(tx.Rebind("INSERT INTO person (first_name, last_name, email) VALUES (?, ?, ?)"), "Jason", "Moiron", "jmoiron@jmoiron.net")
-	tx.MustExec(tx.Rebind("INSERT INTO person (first_name, last_name, email) VALUES (?, ?, ?)"), "John", "Doe", "johndoeDNE@gmail.net")
-	tx.MustExec(tx.Rebind("INSERT INTO place (country, city, telcode) VALUES (?, ?, ?)"), "United States", "New York", "1")
-	tx.MustExec(tx.Rebind("INSERT INTO place (country, telcode) VALUES (?, ?)"), "Hong Kong", "852")
+	db.MustExec(db.Rebind("INSERT INTO person (first_name, last_name, email) VALUES (?, ?, ?)"), "Jason", "Moiron", "jmoiron@jmoiron.net")
+	db.MustExecContext(context.Background(), db.Rebind("INSERT INTO person (first_name, last_name, email) VALUES (?, ?, ?)"), "John", "Doe", "johndoeDNE@gmail.net")
+	db.MustExecOnSlave(db.Rebind("INSERT INTO place (country, city, telcode) VALUES (?, ?, ?)"), "United States", "New York", "1")
+	db.MustExecContextOnSlave(context.Background(), db.Rebind("INSERT INTO place (country, telcode) VALUES (?, ?)"), "Hong Kong", "852")
+
+	tx := db.MustBeginx()
 	tx.MustExec(tx.Rebind("INSERT INTO place (country, telcode) VALUES (?, ?)"), "Singapore", "65")
 	if db.DriverName() == "mysql" {
 		tx.MustExec(tx.Rebind("INSERT INTO capplace (`COUNTRY`, `TELCODE`) VALUES (?, ?)"), "Sarf Efrica", "27")
 	} else {
 		tx.MustExec(tx.Rebind("INSERT INTO capplace (\"COUNTRY\", \"TELCODE\") VALUES (?, ?)"), "Sarf Efrica", "27")
 	}
-	tx.MustExec(tx.Rebind("INSERT INTO employees (name, id) VALUES (?, ?)"), "Peter", "4444")
+
+	tx.Commit()
+
+	tx = db.MustBeginTx(context.Background(), nil)
 	tx.MustExec(tx.Rebind("INSERT INTO employees (name, id, boss_id) VALUES (?, ?, ?)"), "Joe", "1", "4444")
 	tx.MustExec(tx.Rebind("INSERT INTO employees (name, id, boss_id) VALUES (?, ?, ?)"), "Martin", "2", "4444")
 	tx.Commit()
+
+	txx := db.MustBegin()
+	txx.Exec(db.Rebind("INSERT INTO employees (name, id) VALUES (?, ?)"), "Peter", "4444")
+	if e := txx.Commit(); e != nil {
+		panic(e)
+	}
 }
 
 func TestParseError(t *testing.T) {
@@ -486,6 +498,10 @@ func TestConnectMasterSlave(t *testing.T) {
 	if db.masters.healthCheckPeriod != 300 || db.slaves.healthCheckPeriod != 200 {
 		t.Fatal("SetMasterHealthCheckPeriod fail")
 	}
+	db.SetSlaveHealthCheckPeriod(311)
+	if db.slaves.healthCheckPeriod != 311 {
+		t.Fatal("SetSlaveHealthCheckPeriod fail")
+	}
 
 	// test set idle connection
 	db.SetMaxIdleConns(12)
@@ -557,6 +573,45 @@ func TestConnectMasterSlave(t *testing.T) {
 }
 
 func TestGlobalFunc(t *testing.T) {
+	// test set mapper func
+	_mapperFunc(nil, nil)
+	_mapperFunc([]*sqlx.DB{}, nil)
+	dbs := DBs{}
+	dbs.MapperFunc(nil)
+	dbs.MapperFuncMaster(nil)
+	dbs.MapperFuncSlave(nil)
+
+	// rebind
+	if dbs.Rebind("SELECT * FROM test") != "" {
+		t.Fatal("Test rebind fail")
+	}
+	dbs._all = nil
+	if rb := dbs.Rebind("SELECT * FROM test"); rb != "" {
+		t.Fatal("Test rebind fail", rb)
+	}
+	dbs._all = []*sqlx.DB{nil}
+	if rb := dbs.Rebind("SELECT * FROM test"); rb != "" {
+		t.Fatal("Test rebind fail", rb)
+	}
+	dbs._all = []*sqlx.DB{{}}
+	if rb := dbs.Rebind("SELECT * FROM test"); rb != "SELECT * FROM test" {
+		t.Fatal("Test rebind fail", rb)
+	}
+
+	// bindname
+	dbs._all = nil
+	if _, _, e := dbs.BindNamed("DELETE FROM person WHERE first_name=:first_name", "John"); e != ErrNoConnection {
+		t.Fatal("Test BindNamed failed")
+	}
+	dbs._all = []*sqlx.DB{}
+	if _, _, e := dbs.BindNamed("DELETE FROM person WHERE first_name=:first_name", "John"); e != ErrNoConnection {
+		t.Fatal("Test BindNamed failed")
+	}
+	dbs._all = []*sqlx.DB{nil}
+	if _, _, e := dbs.BindNamed("DELETE FROM person WHERE first_name=:first_name", "John"); e != ErrNoConnection {
+		t.Fatal("Test BindNamed failed")
+	}
+
 	dsn := "user=test1 dbname=test1 sslmode=disable"
 	db1, _ := sqlx.Open("postgres", dsn)
 	db2, _ := sqlx.Open("postgres", dsn)
@@ -569,11 +624,11 @@ func TestGlobalFunc(t *testing.T) {
 	dbB.add(db2)
 	dbB.add(db3)
 	dbB.add(db4)
-	if _, err := _exec(nil, "SELECT 1"); err != ErrNoConnection {
+	if _, err := _exec(context.Background(), nil, "SELECT 1"); err != ErrNoConnection {
 		t.Fatal("_exec fail")
 	}
 
-	if _, err := _exec(dbB, "SELECT 1"); err != ErrNoConnectionOrWsrep {
+	if _, err := _exec(context.Background(), dbB, "SELECT 1"); err != ErrNoConnectionOrWsrep {
 		t.Fatal("_exec fail")
 	}
 	dbB.destroy()
@@ -582,7 +637,7 @@ func TestGlobalFunc(t *testing.T) {
 	dbB.init(-1, 2, true)
 	dbB.add(db1)
 	dbB.add(db2)
-	if _, _, err := _query(dbB, "SELECT 1"); err != ErrNoConnectionOrWsrep {
+	if _, _, err := _query(context.Background(), dbB, "SELECT 1"); err != ErrNoConnectionOrWsrep {
 		t.Fatal("_query fail")
 	}
 	dbB.destroy()
@@ -591,28 +646,8 @@ func TestGlobalFunc(t *testing.T) {
 	dbB.init(-1, 2, true)
 	dbB.add(db1)
 	dbB.add(db2)
-	if rowx := _queryRowx(dbB, "SELECT 1"); rowx.Err() != ErrNoConnectionOrWsrep {
-		t.Fatal("_queryRowx fail")
-	}
-	dbB.destroy()
-
-	dbB = &dbBalancer{}
-	dbB.init(-1, 4, true)
-	dbB.add(db1)
-	dbB.add(db2)
-	dbB.add(db3)
-	dbB.add(db4)
-	if _, err := _queryx(dbB, "SELECT 1"); err != ErrNoConnectionOrWsrep {
-		t.Fatal("_queryx fail")
-	}
-	dbB.destroy()
-
-	dbB = &dbBalancer{}
-	dbB.init(-1, 2, true)
-	dbB.add(db1)
-	dbB.add(db2)
 	tmp := 1
-	if err := _get(dbB, &tmp, "SELECT 1"); err != ErrNoConnectionOrWsrep {
+	if _, err := _get(context.Background(), dbB, &tmp, "SELECT 1"); err != ErrNoConnectionOrWsrep {
 		t.Fatal("_get fail")
 	}
 	dbB.destroy()
@@ -622,7 +657,7 @@ func TestGlobalFunc(t *testing.T) {
 	dbB.add(db1)
 	dbB.add(db2)
 	ano := []*Person{}
-	if err := _select(dbB, &ano, "SELECT * FROM test"); err != ErrNoConnectionOrWsrep {
+	if _, err := _select(context.Background(), dbB, &ano, "SELECT * FROM test"); err != ErrNoConnectionOrWsrep {
 		t.Fatal("_select fail")
 	}
 	dbB.destroy()
@@ -631,7 +666,7 @@ func TestGlobalFunc(t *testing.T) {
 	dbB.init(-1, 2, true)
 	dbB.add(db1)
 	dbB.add(db2)
-	if _, err := _namedExec(dbB, "DELETE FROM person WHERE first_name=:first_name", &Person{FirstName: "123"}); err != ErrNoConnectionOrWsrep {
+	if _, err := _namedExec(context.Background(), dbB, "DELETE FROM person WHERE first_name=:first_name", &Person{FirstName: "123"}); err != ErrNoConnectionOrWsrep {
 		t.Fatal("_namedExec fail")
 	}
 	dbB.destroy()
@@ -641,7 +676,7 @@ func TestGlobalFunc(t *testing.T) {
 	dbB.add(db1)
 	dbB.add(db2)
 	ano = []*Person{}
-	if _, err := _namedQuery(dbB, "SELECT * FROM person WHERE first_name=:first_name", &Person{FirstName: "123"}); err != ErrNoConnectionOrWsrep {
+	if _, err := _namedQuery(context.Background(), dbB, "SELECT * FROM person WHERE first_name=:first_name", &Person{FirstName: "123"}); err != ErrNoConnectionOrWsrep {
 		t.Fatal("_namedQuery fail")
 	}
 	dbB.destroy()
@@ -717,23 +752,153 @@ func TestMissingName(t *testing.T) {
 
 		// test Get
 		pp := PersonPlus{}
-		err = db.Get(&pp, "SELECT * FROM person LIMIT 1")
-		if err == nil {
+		if err = db.Get(&pp, "SELECT * FROM person LIMIT 1"); err == nil {
+			t.Error("Expected missing name Get to fail, but it did not.")
+		}
+		if err = db.GetOnMaster(&pp, "SELECT * FROM person LIMIT 1"); err == nil {
 			t.Error("Expected missing name Get to fail, but it did not.")
 		}
 
 		// test naked StructScan
 		pps = []PersonPlus{}
-		rows, err := db.Queryx("SELECT * FROM person LIMIT 1")
+		rows, err := db.Query("SELECT * FROM person LIMIT 1")
 		if err != nil {
 			t.Fatal(err)
 		}
 		rows.Next()
-		err = StructScan(rows, &pps)
+		err = sqlx.StructScan(rows, &pps)
 		if err == nil {
 			t.Error("Expected missing name in StructScan to fail, but it did not.")
 		}
 		rows.Close()
+
+		pps = []PersonPlus{}
+		rows, err = db.QueryContext(context.Background(), "SELECT * FROM person LIMIT 1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows.Next()
+		err = sqlx.StructScan(rows, &pps)
+		if err == nil {
+			t.Error("Expected missing name in StructScan to fail, but it did not.")
+		}
+		rows.Close()
+
+		pps = []PersonPlus{}
+		rows, err = db.QueryOnMaster("SELECT * FROM person LIMIT 1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows.Next()
+		err = sqlx.StructScan(rows, &pps)
+		if err == nil {
+			t.Error("Expected missing name in StructScan to fail, but it did not.")
+		}
+		rows.Close()
+
+		pps = []PersonPlus{}
+		rows, err = db.QueryContextOnMaster(context.Background(), "SELECT * FROM person LIMIT 1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows.Next()
+		err = sqlx.StructScan(rows, &pps)
+		if err == nil {
+			t.Error("Expected missing name in StructScan to fail, but it did not.")
+		}
+		rows.Close()
+
+		pps = []PersonPlus{}
+		rows1, err := db.Queryx("SELECT * FROM person LIMIT 1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows1.Next()
+		err = sqlx.StructScan(rows1, &pps)
+		if err == nil {
+			t.Error("Expected missing name in StructScan to fail, but it did not.")
+		}
+		rows1.Close()
+
+		pps = []PersonPlus{}
+		rows1, err = db.QueryxContext(context.Background(), "SELECT * FROM person LIMIT 1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows1.Next()
+		err = sqlx.StructScan(rows1, &pps)
+		if err == nil {
+			t.Error("Expected missing name in StructScan to fail, but it did not.")
+		}
+		rows1.Close()
+
+		pps = []PersonPlus{}
+		rows1, err = db.QueryxOnMaster("SELECT * FROM person LIMIT 1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows1.Next()
+		err = sqlx.StructScan(rows1, &pps)
+		if err == nil {
+			t.Error("Expected missing name in StructScan to fail, but it did not.")
+		}
+		rows1.Close()
+
+		pps = []PersonPlus{}
+		rows1, err = db.QueryxContextOnMaster(context.Background(), "SELECT * FROM person LIMIT 1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows1.Next()
+		err = sqlx.StructScan(rows1, &pps)
+		if err == nil {
+			t.Error("Expected missing name in StructScan to fail, but it did not.")
+		}
+		rows1.Close()
+
+		_, nstmt, err := db.PrepareNamed(`SELECT * FROM person WHERE first_name != :name`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pps = []PersonPlus{}
+		err = nstmt.Select(&pps, map[string]interface{}{"name": "Jason"})
+		if err == nil {
+			t.Fatal("missing destination name added_at")
+		}
+		nstmt.Close()
+
+		_, nstmt, err = db.PrepareNamedOnSlave(`SELECT * FROM person WHERE first_name != :name`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pps = []PersonPlus{}
+		err = nstmt.Select(&pps, map[string]interface{}{"name": "Jason"})
+		if err == nil {
+			t.Fatal("missing destination name added_at")
+		}
+		nstmt.Close()
+
+		_, nstmt, err = db.PrepareNamedContext(context.Background(), `SELECT * FROM person WHERE first_name != :name`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pps = []PersonPlus{}
+		err = nstmt.Select(&pps, map[string]interface{}{"name": "Jason"})
+		if err == nil {
+			t.Fatal("missing destination name added_at")
+		}
+		nstmt.Close()
+
+		_, nstmt, err = db.PrepareNamedContextOnSlave(context.Background(), `SELECT * FROM person WHERE first_name != :name`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pps = []PersonPlus{}
+		err = nstmt.Select(&pps, map[string]interface{}{"name": "Jason"})
+		if err == nil {
+			t.Fatal("missing destination name added_at")
+		}
+		nstmt.Close()
 	})
 }
 
@@ -760,30 +925,6 @@ func TestEmbeddedStruct(t *testing.T) {
 				t.Errorf("Expected non zero lengthed country.")
 			}
 		}
-
-		// test embedded structs with StructScan
-		rows, err := db.Queryx(
-			`SELECT person.*, place.* FROM
-         person natural join place`)
-		if err != nil {
-			t.Error(err)
-		}
-
-		perp := PersonPlace{}
-		rows.Next()
-		err = rows.StructScan(&perp)
-		if err != nil {
-			t.Error(err)
-		}
-
-		if len(perp.Person.FirstName) == 0 {
-			t.Errorf("Expected non zero lengthed first name.")
-		}
-		if len(perp.Place.Country) == 0 {
-			t.Errorf("Expected non zero lengthed country.")
-		}
-
-		rows.Close()
 
 		// test the same for embedded pointer structs
 		peopleAndPlacesPtrs := []PersonPlacePtr{}
@@ -905,24 +1046,24 @@ func TestJoinQueryNamedPointerStruct(t *testing.T) {
 func TestSelectSliceMapTimes(t *testing.T) {
 	_RunWithSchema(defaultSchema, t, func(db *DBs, t *testing.T) {
 		_loadDefaultFixture(db, t)
-		rows, err := db.Queryx("SELECT * FROM person")
+		rows, err := db.Query("SELECT * FROM person")
 		if err != nil {
 			t.Fatal(err)
 		}
 		for rows.Next() {
-			_, err := rows.SliceScan()
+			_, err := sqlx.SliceScan(rows)
 			if err != nil {
 				t.Error(err)
 			}
 		}
 
-		rows, err = db.Queryx("SELECT * FROM person")
+		rows, err = db.Query("SELECT * FROM person")
 		if err != nil {
 			t.Fatal(err)
 		}
 		for rows.Next() {
 			m := map[string]interface{}{}
-			err := rows.MapScan(m)
+			err := sqlx.MapScan(rows, m)
 			if err != nil {
 				t.Error(err)
 			}
@@ -934,15 +1075,71 @@ func TestSelectSliceMapTimes(t *testing.T) {
 func TestNilReceivers(t *testing.T) {
 	_RunWithSchema(defaultSchema, t, func(db *DBs, t *testing.T) {
 		_loadDefaultFixture(db, t)
+
 		var p *Person
 		err := db.Get(p, "SELECT * FROM person LIMIT 1")
 		if err == nil {
 			t.Error("Expected error when getting into nil struct ptr.")
 		}
+
+		if _, err = db.QueryRow("SELECT * FROM person LIMIT 1"); err != nil {
+			t.Error("Fail query row")
+		}
+
+		if r, err := db.QueryRowOnMaster("SELECT * FROM person LIMIT 2"); err != nil || r == nil {
+			t.Error("Fail query row")
+		}
+
+		if _, err = db.QueryRowContext(context.Background(), "SELECT * FROM person LIMIT 1"); err != nil {
+			t.Error("Fail query row")
+		}
+
+		if r, err := db.QueryRowContextOnMaster(context.Background(), "SELECT * FROM person LIMIT 2"); err != nil || r == nil {
+			t.Error("Fail query row")
+		}
+
+		if _, err = db.QueryRowx("SELECT * FROM person LIMIT 1"); err != nil {
+			t.Error("Fail query row")
+		}
+
+		if r, err := db.QueryRowxOnMaster("SELECT * FROM person LIMIT 2"); err != nil || r == nil {
+			t.Error("Fail query row")
+		}
+
+		if _, err = db.QueryRowxContext(context.Background(), "SELECT * FROM person LIMIT 1"); err != nil {
+			t.Error("Fail query row")
+		}
+
+		if r, err := db.QueryRowxContextOnMaster(context.Background(), "SELECT * FROM person LIMIT 2"); err != nil || r == nil {
+			t.Error("Fail query row")
+		}
+
 		var pp *[]Person
-		err = db.Select(pp, "SELECT * FROM person")
-		if err == nil {
+		if err = db.Select(pp, "SELECT * FROM person"); err == nil {
 			t.Error("Expected an error when selecting into nil slice ptr.")
+		}
+		p1 := []Person{}
+		if err = db.Select(&p1, "SELECT * FROM person"); err != nil {
+			t.Error("Fail select")
+		}
+		if err = db.SelectOnMaster(pp, "SELECT * FROM person"); err == nil {
+			t.Error("Expected an error when selecting into nil slice ptr.")
+		}
+		if err = db.SelectOnMaster(&p1, "SELECT * FROM person"); err != nil {
+			t.Error("Fail select")
+		}
+
+		if err = db.SelectContext(context.Background(), pp, "SELECT * FROM person"); err == nil {
+			t.Error("Expected an error when selecting into nil slice ptr.")
+		}
+		if err = db.SelectContext(context.Background(), &p1, "SELECT * FROM person"); err != nil {
+			t.Error("Fail select")
+		}
+		if err = db.SelectContextOnMaster(context.Background(), pp, "SELECT * FROM person"); err == nil {
+			t.Error("Expected an error when selecting into nil slice ptr.")
+		}
+		if err = db.SelectContextOnMaster(context.Background(), &p1, "SELECT * FROM person"); err != nil {
+			t.Error("Fail select")
 		}
 	})
 }
@@ -983,9 +1180,27 @@ func TestNamedQueries(t *testing.T) {
 			FirstName sql.NullString `db:"first_name"`
 			LastName  sql.NullString `db:"last_name"`
 			Email     sql.NullString
+			AddedAt   *time.Time `db:"added_at"`
 		}
 
+		// BindNamed
 		p := Person{
+			FirstName: sql.NullString{String: "ben", Valid: true},
+			LastName:  sql.NullString{String: "doe", Valid: true},
+			Email:     sql.NullString{String: "ben@doe.com", Valid: true},
+		}
+		if st, is, e := db.BindNamed("DELETE FROM person WHERE first_name=:first_name", p); e != nil {
+			t.Fatal("Test BindNamed failed")
+		} else if st != "DELETE FROM person WHERE first_name=?" || len(is) == 0 {
+			t.Fatal("Test BindNamed failed")
+		} else if nullString, ok := is[0].(sql.NullString); !ok {
+			t.Fatal("Test BindNamed failed")
+		} else if nullString.String != "ben" || !nullString.Valid {
+			t.Fatal("Test BindNamed failed")
+		}
+
+		// Insert
+		p = Person{
 			FirstName: sql.NullString{String: "ben", Valid: true},
 			LastName:  sql.NullString{String: "doe", Valid: true},
 			Email:     sql.NullString{String: "ben@doe.com", Valid: true},
@@ -1014,6 +1229,64 @@ func TestNamedQueries(t *testing.T) {
 				t.Error("Expected first name of `doe`, got " + p2.LastName.String)
 			}
 		}
+		rows.Close()
+
+		p2 = &Person{}
+		rows, err = db.NamedQueryContext(context.Background(), "SELECT * FROM person WHERE first_name=:first_name", p)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for rows.Next() {
+			err = rows.StructScan(p2)
+			if err != nil {
+				t.Error(err)
+			}
+			if p2.FirstName.String != "ben" {
+				t.Error("Expected first name of `ben`, got " + p2.FirstName.String)
+			}
+			if p2.LastName.String != "doe" {
+				t.Error("Expected first name of `doe`, got " + p2.LastName.String)
+			}
+		}
+		rows.Close()
+
+		p3 := &Person{}
+		rows, err = db.NamedQueryOnMaster("SELECT * FROM person WHERE first_name=:first_name", p)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for rows.Next() {
+			err = rows.StructScan(p3)
+			if err != nil {
+				t.Error(err)
+			}
+			if p3.FirstName.String != "ben" {
+				t.Error("Expected first name of `ben`, got " + p3.FirstName.String)
+			}
+			if p3.LastName.String != "doe" {
+				t.Error("Expected first name of `doe`, got " + p3.LastName.String)
+			}
+		}
+		rows.Close()
+
+		p3 = &Person{}
+		rows, err = db.NamedQueryContextOnMaster(context.Background(), "SELECT * FROM person WHERE first_name=:first_name", p)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for rows.Next() {
+			err = rows.StructScan(p3)
+			if err != nil {
+				t.Error(err)
+			}
+			if p3.FirstName.String != "ben" {
+				t.Error("Expected first name of `ben`, got " + p3.FirstName.String)
+			}
+			if p3.LastName.String != "doe" {
+				t.Error("Expected first name of `doe`, got " + p3.LastName.String)
+			}
+		}
+		rows.Close()
 
 		type JSONPerson struct {
 			FirstName sql.NullString `json:"FIRST"`
@@ -1036,16 +1309,27 @@ func TestNamedQueries(t *testing.T) {
 		pl := Place{
 			Name: sql.NullString{String: "myplace", Valid: true},
 		}
+		pl1 := Place{
+			ID:   13,
+			Name: sql.NullString{String: "myplace1", Valid: true},
+		}
 
 		pp := PlacePerson{
 			FirstName: sql.NullString{String: "ben", Valid: true},
 			LastName:  sql.NullString{String: "doe", Valid: true},
 			Email:     sql.NullString{String: "ben@doe.com", Valid: true},
 		}
+		pp1 := PlacePerson{
+			FirstName: sql.NullString{String: "john", Valid: true},
+			LastName:  sql.NullString{String: "doe", Valid: true},
+			Email:     sql.NullString{String: "john@doe.com", Valid: true},
+		}
 
 		q2 := `INSERT INTO place (id, name) VALUES (1, :name)`
-		_, err = db.NamedExec(q2, pl)
-		if err != nil {
+		if _, err = db.NamedExec(q2, pl); err != nil {
+			log.Fatal(err)
+		}
+		if _, err = db.NamedExecContextOnSlave(context.Background(), `INSERT INTO place (id, name) VALUES (:id, :name)`, pl1); err != nil {
 			log.Fatal(err)
 		}
 
@@ -1053,8 +1337,11 @@ func TestNamedQueries(t *testing.T) {
 		pp.Place.ID = id
 
 		q3 := `INSERT INTO placeperson (first_name, last_name, email, place_id) VALUES (:first_name, :last_name, :email, :place.id)`
-		_, err = db.NamedExec(q3, pp)
+		_, err = db.NamedExecOnSlave(q3, pp)
 		if err != nil {
+			log.Fatal(err)
+		}
+		if _, err = db.NamedExecContextOnSlave(context.Background(), q3, pp1); err != nil {
 			log.Fatal(err)
 		}
 
@@ -1091,6 +1378,7 @@ func TestNamedQueries(t *testing.T) {
 				t.Errorf("Expected place name of %v, got %v", pp.Place.ID, pp2.Place.ID)
 			}
 		}
+		rows.Close()
 	})
 }
 
@@ -1159,13 +1447,18 @@ func TestScanErrors(t *testing.T) {
 			t.Error(err)
 		}
 
-		rows, err := db.Queryx("SELECT * FROM kv")
+		_, err = db.ExecOnSlave(db.Rebind("INSERT INTO kv (k, v) VALUES (?, ?)"), "world", 2)
+		if err != nil {
+			t.Error(err)
+		}
+
+		rows, err := db.Query("SELECT * FROM kv")
 		if err != nil {
 			t.Error(err)
 		}
 		for rows.Next() {
 			var wt WrongTypes
-			err := rows.StructScan(&wt)
+			err := sqlx.StructScan(rows, &wt)
 			if err == nil {
 				t.Errorf("%s: Scanning wrong types into keys should have errored.", db.DriverName())
 			}
@@ -1207,9 +1500,23 @@ func TestUsages(t *testing.T) {
 		}
 
 		jason = Person{}
-		err = db.Get(&jason, db.Rebind("SELECT * FROM person WHERE first_name=?"), "Jason")
+		if err = db.Get(&jason, db.Rebind("SELECT * FROM person WHERE first_name=?"), "Jason"); err != nil {
+			t.Fatal(err)
+		}
+		if jason.FirstName != "Jason" {
+			t.Errorf("Expecting to get back Jason, but got %v\n", jason.FirstName)
+		}
 
-		if err != nil {
+		jason = Person{}
+		if err = db.GetContext(context.Background(), &jason, db.Rebind("SELECT * FROM person WHERE first_name=?"), "Jason"); err != nil {
+			t.Fatal(err)
+		}
+		if jason.FirstName != "Jason" {
+			t.Errorf("Expecting to get back Jason, but got %v\n", jason.FirstName)
+		}
+
+		jason = Person{}
+		if err = db.GetContextOnMaster(context.Background(), &jason, db.Rebind("SELECT * FROM person WHERE first_name=?"), "Jason"); err != nil {
 			t.Fatal(err)
 		}
 		if jason.FirstName != "Jason" {
@@ -1271,54 +1578,23 @@ func TestUsages(t *testing.T) {
 			t.Errorf("Expected integer telcodes to work, got %#v", places)
 		}
 
-		rows, err := db.Queryx("SELECT * FROM place")
-		if err != nil {
-			t.Fatal(err)
-		}
-		place := Place{}
-		for rows.Next() {
-			err = rows.StructScan(&place)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-
-		rows, err = db.Queryx("SELECT * FROM place")
-		if err != nil {
-			t.Fatal(err)
-		}
-		m := map[string]interface{}{}
-		for rows.Next() {
-			err = rows.MapScan(m)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, ok := m["country"]
-			if !ok {
-				t.Errorf("Expected key `country` in map but could not find it (%#v)\n", m)
-			}
-		}
-
-		rows, err = db.Queryx("SELECT * FROM place")
-		if err != nil {
-			t.Fatal(err)
-		}
-		for rows.Next() {
-			s, err := rows.SliceScan()
-			if err != nil {
-				t.Error(err)
-			}
-			if len(s) != 3 {
-				t.Errorf("Expected 3 columns in result, got %d\n", len(s))
-			}
-		}
-
 		// test advanced querying
 		// test that NamedExec works with a map as well as a struct
 		_, err = db.NamedExec("INSERT INTO person (first_name, last_name, email) VALUES (:first, :last, :email)", map[string]interface{}{
 			"first": "Bin",
 			"last":  "Smuth",
 			"email": "bensmith@allblacks.nz",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// test advanced querying
+		// test that NamedExec works with a map as well as a struct
+		_, err = db.NamedExecContext(context.Background(), "INSERT INTO person (first_name, last_name, email) VALUES (:first, :last, :email)", map[string]interface{}{
+			"first": "John",
+			"last":  "Smith",
+			"email": "johnsmith@allblacks.nz",
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -1396,11 +1672,7 @@ func TestUsages(t *testing.T) {
 
 		// test base type slices
 		var sdest []string
-		rows, err = db.Queryx("SELECT email FROM person ORDER BY email ASC;")
-		if err != nil {
-			t.Error(err)
-		}
-		err = scanAll(rows, &sdest, false)
+		err = db.Select(&sdest, "SELECT email FROM person ORDER BY email ASC;")
 		if err != nil {
 			t.Error(err)
 		}
@@ -1444,7 +1716,7 @@ func TestUsages(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		expected := []string{"Ben", "Bin", "Jason", "John"}
+		expected := []string{"Ben", "Bin", "Jason", "John", "John"}
 		for i, got := range sdest {
 			if got != expected[i] {
 				t.Errorf("Expected %d result to be %s, but got %s", i, expected[i], got)
@@ -1460,6 +1732,162 @@ func TestUsages(t *testing.T) {
 			if val.Valid && val.String != "New York" {
 				t.Errorf("expected single valid result to be `New York`, but got %s", val.String)
 			}
+		}
+
+		dbx, stmt2, err := db.Preparex(db.Rebind("SELECT * FROM person WHERE first_name=?"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		jason = Person{}
+		tx, err := dbx.Beginx()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tstmt2 := tx.Stmtx(stmt2)
+		row2 := tstmt2.QueryRowx("Jason")
+		err = row2.StructScan(&jason)
+		if err != nil {
+			t.Error(err)
+		}
+		tx.Commit()
+
+		dbx, stmt2, err = db.PreparexContext(context.Background(), db.Rebind("SELECT * FROM person WHERE first_name=?"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		jason = Person{}
+		tx, err = dbx.Beginx()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tstmt2 = tx.Stmtx(stmt2)
+		row2 = tstmt2.QueryRowx("Jason")
+		err = row2.StructScan(&jason)
+		if err != nil {
+			t.Error(err)
+		}
+		tx.Commit()
+
+		dbx, stmt2, err = db.PreparexOnSlave(db.Rebind("SELECT * FROM person WHERE first_name=?"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		jason = Person{}
+		tx, err = dbx.Beginx()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tstmt2 = tx.Stmtx(stmt2)
+		row2 = tstmt2.QueryRowx("Jason")
+		err = row2.StructScan(&jason)
+		if err != nil {
+			t.Error(err)
+		}
+		tx.Commit()
+
+		dbx, stmt2, err = db.PreparexContextOnSlave(context.Background(), db.Rebind("SELECT * FROM person WHERE first_name=?"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		jason = Person{}
+		tx, err = dbx.Beginx()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tstmt2 = tx.Stmtx(stmt2)
+		row2 = tstmt2.QueryRowx("Jason")
+		err = row2.StructScan(&jason)
+		if err != nil {
+			t.Error(err)
+		}
+		tx.Commit()
+
+		dbx1, stmt3, err := db.Prepare(db.Rebind("SELECT * FROM person WHERE first_name=?"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		jason = Person{}
+		tx1, err := dbx1.Begin()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tstmt3 := tx1.Stmt(stmt3)
+		row3 := tstmt3.QueryRow("Jason")
+		err = row3.Scan(&jason.FirstName, &jason.LastName, &jason.Email, &jason.AddedAt)
+		if err != nil {
+			t.Error(err)
+		}
+		tx1.Commit()
+
+		dbx1, stmt3, err = db.PrepareContext(context.Background(), db.Rebind("SELECT * FROM person WHERE first_name=?"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		jason = Person{}
+		tx1, err = dbx1.Begin()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tstmt3 = tx1.Stmt(stmt3)
+		row3 = tstmt3.QueryRow("Jason")
+		err = row3.Scan(&jason.FirstName, &jason.LastName, &jason.Email, &jason.AddedAt)
+		if err != nil {
+			t.Error(err)
+		}
+		tx1.Commit()
+
+		dbx1, stmt3, err = db.PrepareOnSlave(db.Rebind("SELECT * FROM person WHERE first_name=?"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		jason = Person{}
+		tx1, err = dbx1.Begin()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tstmt3 = tx1.Stmt(stmt3)
+		row3 = tstmt3.QueryRow("Jason")
+		err = row3.Scan(&jason.FirstName, &jason.LastName, &jason.Email, &jason.AddedAt)
+		if err != nil {
+			t.Error(err)
+		}
+		tx1.Commit()
+		isSlave := false
+		for _, v := range db._slaves {
+			if v == dbx1 {
+				isSlave = true
+				break
+			}
+		}
+		if !isSlave {
+			t.Error("Fail to prepare on slave")
+		}
+
+		dbx1, stmt3, err = db.PrepareContextOnSlave(context.Background(), db.Rebind("SELECT * FROM person WHERE first_name=?"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		jason = Person{}
+		tx1, err = dbx1.Begin()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tstmt3 = tx1.Stmt(stmt3)
+		row3 = tstmt3.QueryRow("Jason")
+		err = row3.Scan(&jason.FirstName, &jason.LastName, &jason.Email, &jason.AddedAt)
+		if err != nil {
+			t.Error(err)
+		}
+		tx1.Commit()
+		isSlave = false
+		for _, v := range db._slaves {
+			if v == dbx1 {
+				isSlave = true
+				break
+			}
+		}
+		if !isSlave {
+			t.Error("Fail to prepare on slave")
 		}
 	})
 }
@@ -1522,4 +1950,92 @@ func Test_ErrBadConnChecker(t *testing.T) {
 	if err := fmt.Errorf("invalid connections"); isErrBadConn(err) {
 		t.Fatal("Check err bad conn failed")
 	}
+}
+
+func TestStressQueries(t *testing.T) {
+	var schema = Schema{
+		create: `
+			CREATE TABLE stress (
+				k text,
+				v integer
+			);`,
+		drop: `drop table stress;`,
+	}
+
+	_RunWithSchema(schema, t, func(db *DBs, t *testing.T) {
+		ch := make(chan bool)
+
+		type StressType struct {
+			K string
+			V int
+		}
+
+		var wg sync.WaitGroup
+		worker := func(wg *sync.WaitGroup) {
+			defer wg.Done()
+			for range ch {
+				if _, err := db.Exec("INSERT INTO stress(k,v) VALUES (?,?)", "a", 12); err != nil {
+					t.Log(err)
+				}
+
+				if _, err := db.ExecContext(context.Background(), "INSERT INTO stress(k,v) VALUES (?,?)", "a", 12); err != nil {
+					t.Log(err)
+				}
+
+				if _, err := db.ExecContextOnSlave(context.Background(), "INSERT INTO stress(k,v) VALUES (?,?)", "a", 12); err != nil {
+					t.Log(err)
+				}
+
+				var x []StressType
+				if err := db.Select(&x, "SELECT * FROM stress"); err != nil {
+					t.Log(err)
+				}
+
+				var y StressType
+				if err := db.Get(&y, "SELECT * FROM stress limit 1"); err != nil {
+					t.Log(err)
+				}
+
+				if _, err := db.Exec("DELETE FROM stress WHERE k = ?", "c"); err != nil {
+					t.Log(err)
+				}
+
+				tx, e := db.Begin()
+				if e != nil {
+					t.Log(e)
+				} else {
+					tx.Exec("INSERT INTO stress(k,v) VALUES (?,?)", "b", 13)
+					tx.Exec("DELETE FROM stress WHERE k = ?", "a")
+					if e = tx.Commit(); e != nil {
+						tx.Rollback()
+						t.Log(e)
+					}
+				}
+
+				txx, e := db.BeginTxx(context.Background(), nil)
+				if e != nil {
+					t.Log(e)
+				} else {
+					txx.Exec("INSERT INTO stress(k,v) VALUES (?,?)", "c", 13)
+					txx.Exec("DELETE FROM stress WHERE k = ?", "b")
+					if e = txx.Commit(); e != nil {
+						txx.Rollback()
+						t.Log(e)
+					}
+				}
+			}
+		}
+
+		for i := 1; i <= 30; i++ {
+			wg.Add(1)
+			go worker(&wg)
+		}
+
+		for i := 0; i < 60; i++ {
+			ch <- true
+		}
+		close(ch)
+
+		wg.Wait()
+	})
 }

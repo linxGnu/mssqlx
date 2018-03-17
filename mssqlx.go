@@ -851,7 +851,7 @@ func (dbs *DBs) BindNamed(query string, arg interface{}) (string, []interface{},
 		}
 	}
 
-	return "", nil, nil
+	return "", nil, ErrNoConnection
 }
 
 func isBadConn(errMessage string) bool {
@@ -891,11 +891,10 @@ func getDBFromBalancer(target *dbBalancer) (db *dbLinkListNode, err error) {
 	return nil, ErrNoConnection
 }
 
-func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *sqlx.Rows, err error) {
+func _namedQuery(ctx context.Context, target *dbBalancer, query string, arg interface{}) (res *sqlx.Rows, err error) {
 	defer func() {
 		if e := recover(); e != nil {
-			err = fmt.Errorf("%v", e)
-			res = nil
+			res, err = nil, fmt.Errorf("%v", e)
 		}
 	}()
 
@@ -915,13 +914,13 @@ func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *sqlx.R
 			continue
 		}
 
-		res, err = db.db.NamedQuery(query, arg)
+		res, err = db.db.NamedQueryContext(ctx, query, arg)
 
 		// detect driver.ErrBadConn occurring when a connection idle for a long time.
 		// this prevents returning driver.ErrBadConn to application.
 		if isErrBadConn(err) {
 			if ping(db.db) == nil {
-				res, err = db.db.NamedQuery(query, arg)
+				res, err = db.db.NamedQueryContext(ctx, query, arg)
 			}
 		}
 
@@ -944,20 +943,31 @@ func _namedQuery(target *dbBalancer, query string, arg interface{}) (res *sqlx.R
 // NamedQuery using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedQuery(query string, arg interface{}) (*sqlx.Rows, error) {
-	return _namedQuery(dbs.slaves, query, arg)
+	return _namedQuery(context.Background(), dbs.slaves, query, arg)
 }
 
 // NamedQueryOnMaster using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedQueryOnMaster(query string, arg interface{}) (*sqlx.Rows, error) {
-	return _namedQuery(dbs.masters, query, arg)
+	return _namedQuery(context.Background(), dbs.masters, query, arg)
 }
 
-func _namedExec(target *dbBalancer, query string, arg interface{}) (res sql.Result, err error) {
+// NamedQueryContext using this DB.
+// Any named placeholder parameters are replaced with fields from arg.
+func (dbs *DBs) NamedQueryContext(ctx context.Context, query string, arg interface{}) (*sqlx.Rows, error) {
+	return _namedQuery(ctx, dbs.slaves, query, arg)
+}
+
+// NamedQueryContextOnMaster using this DB.
+// Any named placeholder parameters are replaced with fields from arg.
+func (dbs *DBs) NamedQueryContextOnMaster(ctx context.Context, query string, arg interface{}) (*sqlx.Rows, error) {
+	return _namedQuery(ctx, dbs.masters, query, arg)
+}
+
+func _namedExec(ctx context.Context, target *dbBalancer, query string, arg interface{}) (res sql.Result, err error) {
 	defer func() {
 		if e := recover(); e != nil {
-			err = fmt.Errorf("%v", e)
-			res = nil
+			res, err = nil, fmt.Errorf("%v", e)
 		}
 	}()
 
@@ -979,39 +989,50 @@ func _namedExec(target *dbBalancer, query string, arg interface{}) (res sql.Resu
 			ping(db.db)
 		}
 
-		r, e := db.db.NamedExec(query, arg)
-
-		if e = parseError(db.db, e); e == ErrNetwork {
+		res, err = db.db.NamedExecContext(ctx, query, arg)
+		if err = parseError(db.db, err); err == ErrNetwork {
 			target.failure(db)
 			continue
 		}
 
-		if e != nil && target.isWsrep && (strings.HasPrefix(e.Error(), "ERROR 1047") || strings.HasPrefix(e.Error(), "Error 1047")) { // for galera cluster
+		// for galera cluster
+		if err != nil && target.isWsrep && (strings.HasPrefix(err.Error(), "ERROR 1047") || strings.HasPrefix(err.Error(), "Error 1047")) {
 			target.failure(db)
 			continue
 		}
 
-		return r, e
+		return
 	}
 }
 
 // NamedExec using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedExec(query string, arg interface{}) (sql.Result, error) {
-	return _namedExec(dbs.masters, query, arg)
+	return _namedExec(context.Background(), dbs.masters, query, arg)
 }
 
 // NamedExecOnSlave using this DB.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedExecOnSlave(query string, arg interface{}) (sql.Result, error) {
-	return _namedExec(dbs.slaves, query, arg)
+	return _namedExec(context.Background(), dbs.slaves, query, arg)
 }
 
-func _query(target *dbBalancer, query string, args ...interface{}) (dbr *sqlx.DB, res *sql.Rows, err error) {
+// NamedExecContext using this DB.
+// Any named placeholder parameters are replaced with fields from arg.
+func (dbs *DBs) NamedExecContext(ctx context.Context, query string, arg interface{}) (sql.Result, error) {
+	return _namedExec(ctx, dbs.masters, query, arg)
+}
+
+// NamedExecContextOnSlave using this DB.
+// Any named placeholder parameters are replaced with fields from arg.
+func (dbs *DBs) NamedExecContextOnSlave(ctx context.Context, query string, arg interface{}) (sql.Result, error) {
+	return _namedExec(ctx, dbs.slaves, query, arg)
+}
+
+func _query(ctx context.Context, target *dbBalancer, query string, args ...interface{}) (dbr *sqlx.DB, res *sql.Rows, err error) {
 	defer func() {
 		if e := recover(); e != nil {
-			err = fmt.Errorf("%v", e)
-			res = nil
+			res, err = nil, fmt.Errorf("%v", e)
 		}
 	}()
 
@@ -1031,13 +1052,13 @@ func _query(target *dbBalancer, query string, args ...interface{}) (dbr *sqlx.DB
 			continue
 		}
 
-		res, err = db.db.Query(query, args...)
+		res, err = db.db.QueryContext(ctx, query, args...)
 
 		// detect driver.ErrBadConn occurring when a connection idle for a long time.
 		// this prevents returning driver.ErrBadConn to application.
 		if isErrBadConn(err) {
 			if ping(db.db) == nil {
-				res, err = db.db.Query(query, args...)
+				res, err = db.db.QueryContext(ctx, query, args...)
 			}
 		}
 
@@ -1056,47 +1077,232 @@ func _query(target *dbBalancer, query string, args ...interface{}) (dbr *sqlx.DB
 	}
 }
 
-func _queryx(target *dbBalancer, query string, args ...interface{}) (*Rows, error) {
-	db, r, err := _query(target, query, args...)
-	if err != nil {
-		return nil, err
+// Query executes a query on slaves that returns rows, typically a SELECT.
+// The args are for any placeholder parameters in the query.
+func (dbs *DBs) Query(query string, args ...interface{}) (r *sql.Rows, err error) {
+	_, r, err = _query(context.Background(), dbs.slaves, query, args...)
+	return
+}
+
+// QueryOnMaster executes a query on masters that returns rows, typically a SELECT.
+// The args are for any placeholder parameters in the query.
+func (dbs *DBs) QueryOnMaster(query string, args ...interface{}) (r *sql.Rows, err error) {
+	_, r, err = _query(context.Background(), dbs.masters, query, args...)
+	return
+}
+
+// QueryContext executes a query on slaves that returns rows, typically a SELECT.
+// The args are for any placeholder parameters in the query.
+func (dbs *DBs) QueryContext(ctx context.Context, query string, args ...interface{}) (r *sql.Rows, err error) {
+	_, r, err = _query(ctx, dbs.slaves, query, args...)
+	return
+}
+
+// QueryContextOnMaster executes a query on masters that returns rows, typically a SELECT.
+// The args are for any placeholder parameters in the query.
+func (dbs *DBs) QueryContextOnMaster(ctx context.Context, query string, args ...interface{}) (r *sql.Rows, err error) {
+	_, r, err = _query(ctx, dbs.masters, query, args...)
+	return
+}
+
+func _queryx(ctx context.Context, target *dbBalancer, query string, args ...interface{}) (dbr *sqlx.DB, res *sqlx.Rows, err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			res, err = nil, fmt.Errorf("%v", e)
+		}
+	}()
+
+	if target == nil {
+		return nil, nil, ErrNoConnection
 	}
-	if db == nil {
-		return &Rows{Rows: r}, err
+
+	var db *dbLinkListNode
+
+	for {
+		if db, err = getDBFromBalancer(target); err != nil {
+			return
+		}
+
+		if db.db == nil {
+			target.failure(db)
+			continue
+		}
+
+		res, err = db.db.QueryxContext(ctx, query, args...)
+
+		// detect driver.ErrBadConn occurring when a connection idle for a long time.
+		// this prevents returning driver.ErrBadConn to application.
+		if isErrBadConn(err) {
+			if ping(db.db) == nil {
+				res, err = db.db.QueryxContext(ctx, query, args...)
+			}
+		}
+
+		if err = parseError(db.db, err); err == ErrNetwork {
+			target.failure(db)
+			continue
+		}
+
+		if err != nil && target.isWsrep && (strings.HasPrefix(err.Error(), "ERROR 1047") || strings.HasPrefix(err.Error(), "Error 1047")) { // for galera cluster
+			target.failure(db)
+			continue
+		}
+
+		dbr = db.db
+		return
+	}
+}
+
+// Queryx executes a query on slaves that returns rows, typically a SELECT.
+// The args are for any placeholder parameters in the query.
+func (dbs *DBs) Queryx(query string, args ...interface{}) (r *sqlx.Rows, err error) {
+	_, r, err = _queryx(context.Background(), dbs.slaves, query, args...)
+	return
+}
+
+// QueryxOnMaster executes a query on masters that returns rows, typically a SELECT.
+// The args are for any placeholder parameters in the query.
+func (dbs *DBs) QueryxOnMaster(query string, args ...interface{}) (r *sqlx.Rows, err error) {
+	_, r, err = _queryx(context.Background(), dbs.masters, query, args...)
+	return
+}
+
+// QueryxContext executes a query on slaves that returns rows, typically a SELECT.
+// The args are for any placeholder parameters in the query.
+func (dbs *DBs) QueryxContext(ctx context.Context, query string, args ...interface{}) (r *sqlx.Rows, err error) {
+	_, r, err = _queryx(ctx, dbs.slaves, query, args...)
+	return
+}
+
+// QueryxContextOnMaster executes a query on masters that returns rows, typically a SELECT.
+// The args are for any placeholder parameters in the query.
+func (dbs *DBs) QueryxContextOnMaster(ctx context.Context, query string, args ...interface{}) (r *sqlx.Rows, err error) {
+	_, r, err = _queryx(ctx, dbs.masters, query, args...)
+	return
+}
+
+func _queryRow(ctx context.Context, target *dbBalancer, query string, args ...interface{}) (dbr *sqlx.DB, res *sql.Row, err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			res, err = nil, fmt.Errorf("%v", e)
+		}
+	}()
+
+	if target == nil {
+		return nil, nil, ErrNoConnection
 	}
 
-	return &Rows{Rows: r, unsafe: isUnsafe(db), Mapper: db.Mapper}, err
+	var db *dbLinkListNode
+
+	for {
+		if db, err = getDBFromBalancer(target); err != nil {
+			return
+		}
+
+		if db.db == nil {
+			target.failure(db)
+			continue
+		}
+
+		res, dbr = db.db.QueryRowContext(ctx, query, args...), db.db
+		return
+	}
 }
 
-// Queryx queries the database and returns an *sqlx.Rows.
-// Any placeholder parameters are replaced with supplied args.
-func (dbs *DBs) Queryx(query string, args ...interface{}) (*Rows, error) {
-	return _queryx(dbs.slaves, query, args...)
-}
-
-// QueryxOnMaster queries the database and returns an *sqlx.Rows.
-// Any placeholder parameters are replaced with supplied args.
-func (dbs *DBs) QueryxOnMaster(query string, args ...interface{}) (*Rows, error) {
-	return _queryx(dbs.masters, query, args...)
-}
-
-// QueryRow executes a query that is expected to return at most one row.
+// QueryRow executes a query on slaves that is expected to return at most one row.
 // QueryRow always returns a non-nil value. Errors are deferred until
 // Row's Scan method is called.
-func (dbs *DBs) QueryRow(query string, args ...interface{}) *Row {
-	_, rows, err := _query(dbs.slaves, query, args...)
-	return &Row{rows: rows, err: err}
+func (dbs *DBs) QueryRow(query string, args ...interface{}) (r *sql.Row, err error) {
+	_, r, err = _queryRow(context.Background(), dbs.slaves, query, args...)
+	return
 }
 
-// QueryRowOnMaster executes a query that is expected to return at most one row.
+// QueryRowOnMaster executes a query on masters that is expected to return at most one row.
 // QueryRow always returns a non-nil value. Errors are deferred until
 // Row's Scan method is called.
-func (dbs *DBs) QueryRowOnMaster(query string, args ...interface{}) *Row {
-	_, rows, err := _query(dbs.masters, query, args...)
-	return &Row{rows: rows, err: err}
+func (dbs *DBs) QueryRowOnMaster(query string, args ...interface{}) (r *sql.Row, err error) {
+	_, r, err = _queryRow(context.Background(), dbs.masters, query, args...)
+	return
 }
 
-func _select(target *dbBalancer, dest interface{}, query string, args ...interface{}) (err error) {
+// QueryRowContext executes a query on slaves that is expected to return at most one row.
+// QueryRow always returns a non-nil value. Errors are deferred until
+// Row's Scan method is called.
+func (dbs *DBs) QueryRowContext(ctx context.Context, query string, args ...interface{}) (r *sql.Row, err error) {
+	_, r, err = _queryRow(ctx, dbs.slaves, query, args...)
+	return
+}
+
+// QueryRowContextOnMaster executes a query on masters that is expected to return at most one row.
+// QueryRow always returns a non-nil value. Errors are deferred until
+// Row's Scan method is called.
+func (dbs *DBs) QueryRowContextOnMaster(ctx context.Context, query string, args ...interface{}) (r *sql.Row, err error) {
+	_, r, err = _queryRow(ctx, dbs.masters, query, args...)
+	return
+}
+
+func _queryRowx(ctx context.Context, target *dbBalancer, query string, args ...interface{}) (dbr *sqlx.DB, res *sqlx.Row, err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			res, err = nil, fmt.Errorf("%v", e)
+		}
+	}()
+
+	if target == nil {
+		return nil, nil, ErrNoConnection
+	}
+
+	var db *dbLinkListNode
+
+	for {
+		if db, err = getDBFromBalancer(target); err != nil {
+			return
+		}
+
+		if db.db == nil {
+			target.failure(db)
+			continue
+		}
+
+		res, dbr = db.db.QueryRowxContext(ctx, query, args...), db.db
+		return
+	}
+}
+
+// QueryRowx executes a query on slaves that is expected to return at most one row.
+// But return sqlx.Row instead of sql.Row.
+// QueryRow always returns a non-nil value. Errors are deferred until
+// Row's Scan method is called.
+func (dbs *DBs) QueryRowx(query string, args ...interface{}) (r *sqlx.Row, err error) {
+	_, r, err = _queryRowx(context.Background(), dbs.slaves, query, args...)
+	return
+}
+
+// QueryRowxOnMaster executes a query on masters that is expected to return at most one row.
+// QueryRow always returns a non-nil value. Errors are deferred until
+// Row's Scan method is called.
+func (dbs *DBs) QueryRowxOnMaster(query string, args ...interface{}) (r *sqlx.Row, err error) {
+	_, r, err = _queryRowx(context.Background(), dbs.masters, query, args...)
+	return
+}
+
+// QueryRowxContext executes a query on slaves that is expected to return at most one row.
+// QueryRow always returns a non-nil value. Errors are deferred until
+// Row's Scan method is called.
+func (dbs *DBs) QueryRowxContext(ctx context.Context, query string, args ...interface{}) (r *sqlx.Row, err error) {
+	_, r, err = _queryRowx(ctx, dbs.slaves, query, args...)
+	return
+}
+
+// QueryRowxContextOnMaster executes a query on masters that is expected to return at most one row.
+// QueryRow always returns a non-nil value. Errors are deferred until
+// Row's Scan method is called.
+func (dbs *DBs) QueryRowxContextOnMaster(ctx context.Context, query string, args ...interface{}) (r *sqlx.Row, err error) {
+	_, r, err = _queryRowx(ctx, dbs.masters, query, args...)
+	return
+}
+
+func _select(ctx context.Context, target *dbBalancer, dest interface{}, query string, args ...interface{}) (dbr *sqlx.DB, err error) {
 	defer func() {
 		if e := recover(); e != nil {
 			err = fmt.Errorf("%v", e)
@@ -1104,86 +1310,158 @@ func _select(target *dbBalancer, dest interface{}, query string, args ...interfa
 	}()
 
 	if target == nil {
-		return ErrNoConnection
+		return nil, ErrNoConnection
 	}
 
-	rows, err := _queryx(target, query, args...)
-	if err != nil {
-		return err
+	var db *dbLinkListNode
+
+	for {
+		if db, err = getDBFromBalancer(target); err != nil {
+			return
+		}
+
+		if db.db == nil {
+			target.failure(db)
+			continue
+		}
+
+		err = db.db.SelectContext(ctx, dest, query, args...)
+
+		// detect driver.ErrBadConn occurring when a connection idle for a long time.
+		// this prevents returning driver.ErrBadConn to application.
+		if isErrBadConn(err) {
+			if ping(db.db) == nil {
+				err = db.db.SelectContext(ctx, dest, query, args...)
+			}
+		}
+
+		if err = parseError(db.db, err); err == ErrNetwork {
+			target.failure(db)
+			continue
+		}
+
+		if err != nil && target.isWsrep && (strings.HasPrefix(err.Error(), "ERROR 1047") || strings.HasPrefix(err.Error(), "Error 1047")) { // for galera cluster
+			target.failure(db)
+			continue
+		}
+
+		dbr = db.db
+		return
 	}
-
-	// if something happens here, we want to make sure the rows are Closed
-	defer rows.Close()
-
-	return scanAll(rows, dest, false)
 }
 
-// Select using this DB.
+// Select on slaves.
 // Any placeholder parameters are replaced with supplied args.
-func (dbs *DBs) Select(dest interface{}, query string, args ...interface{}) error {
-	return _select(dbs.slaves, dest, query, args...)
+func (dbs *DBs) Select(dest interface{}, query string, args ...interface{}) (err error) {
+	_, err = _select(context.Background(), dbs.slaves, dest, query, args...)
+	return
 }
 
-// SelectOnMaster using this DB.
+// SelectOnMaster select on master.
 // Any placeholder parameters are replaced with supplied args.
-func (dbs *DBs) SelectOnMaster(dest interface{}, query string, args ...interface{}) error {
-	return _select(dbs.masters, dest, query, args...)
+func (dbs *DBs) SelectOnMaster(dest interface{}, query string, args ...interface{}) (err error) {
+	_, err = _select(context.Background(), dbs.masters, dest, query, args...)
+	return
 }
 
-func _queryRowx(target *dbBalancer, que string, args ...interface{}) *Row {
-	db, rows, err := _query(target, que, args...)
-	if db == nil {
-		return &Row{rows: rows, err: err}
-	}
-
-	return &Row{rows: rows, err: err, unsafe: isUnsafe(db), Mapper: db.Mapper}
-}
-
-// QueryRowx queries the database and returns an *Row.
+// SelectContext on slaves.
 // Any placeholder parameters are replaced with supplied args.
-func (dbs *DBs) QueryRowx(query string, args ...interface{}) *Row {
-	return _queryRowx(dbs.slaves, query, args...)
+func (dbs *DBs) SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) (err error) {
+	_, err = _select(ctx, dbs.slaves, dest, query, args...)
+	return
 }
 
-// QueryRowxOnMaster queries the database and returns an *Row.
+// SelectContextOnMaster select on master.
 // Any placeholder parameters are replaced with supplied args.
-func (dbs *DBs) QueryRowxOnMaster(query string, args ...interface{}) *Row {
-	return _queryRowx(dbs.masters, query, args...)
+func (dbs *DBs) SelectContextOnMaster(ctx context.Context, dest interface{}, query string, args ...interface{}) (err error) {
+	_, err = _select(ctx, dbs.masters, dest, query, args...)
+	return
 }
 
-func _get(target *dbBalancer, dest interface{}, query string, args ...interface{}) error {
-	return _queryRowx(target, query, args...).scanAny(dest, false)
-}
-
-// Get using this DB.
-// Any placeholder parameters are replaced with supplied args.
-// An error is returned if the result set is empty.
-func (dbs *DBs) Get(dest interface{}, query string, args ...interface{}) error {
-	return _get(dbs.slaves, dest, query, args...)
-}
-
-// GetOnMaster using this DB.
-// Any placeholder parameters are replaced with supplied args.
-// An error is returned if the result set is empty.
-func (dbs *DBs) GetOnMaster(dest interface{}, query string, args ...interface{}) error {
-	return _get(dbs.masters, dest, query, args...)
-}
-
-// Exec do exec on masters
-func (dbs *DBs) Exec(query string, args ...interface{}) (sql.Result, error) {
-	return _exec(dbs.masters, query, args...)
-}
-
-// ExecSlave do exec on slave only
-func (dbs *DBs) ExecSlave(query string, args ...interface{}) (sql.Result, error) {
-	return _exec(dbs.slaves, query, args...)
-}
-
-func _exec(target *dbBalancer, query string, args ...interface{}) (res sql.Result, err error) {
+func _get(ctx context.Context, target *dbBalancer, dest interface{}, query string, args ...interface{}) (dbr *sqlx.DB, err error) {
 	defer func() {
 		if e := recover(); e != nil {
 			err = fmt.Errorf("%v", e)
-			res = nil
+		}
+	}()
+
+	if target == nil {
+		return nil, ErrNoConnection
+	}
+
+	var db *dbLinkListNode
+
+	for {
+		if db, err = getDBFromBalancer(target); err != nil {
+			return
+		}
+
+		if db.db == nil {
+			target.failure(db)
+			continue
+		}
+
+		err = db.db.GetContext(ctx, dest, query, args...)
+
+		// detect driver.ErrBadConn occurring when a connection idle for a long time.
+		// this prevents returning driver.ErrBadConn to application.
+		if isErrBadConn(err) {
+			if ping(db.db) == nil {
+				err = db.db.GetContext(ctx, dest, query, args...)
+			}
+		}
+
+		if err = parseError(db.db, err); err == ErrNetwork {
+			target.failure(db)
+			continue
+		}
+
+		if err != nil && target.isWsrep && (strings.HasPrefix(err.Error(), "ERROR 1047") || strings.HasPrefix(err.Error(), "Error 1047")) { // for galera cluster
+			target.failure(db)
+			continue
+		}
+
+		dbr = db.db
+		return
+	}
+}
+
+// Get on slaves.
+// Any placeholder parameters are replaced with supplied args.
+// An error is returned if the result set is empty.
+func (dbs *DBs) Get(dest interface{}, query string, args ...interface{}) (err error) {
+	_, err = _get(context.Background(), dbs.slaves, dest, query, args...)
+	return
+}
+
+// GetOnMaster on masters.
+// Any placeholder parameters are replaced with supplied args.
+// An error is returned if the result set is empty.
+func (dbs *DBs) GetOnMaster(dest interface{}, query string, args ...interface{}) (err error) {
+	_, err = _get(context.Background(), dbs.masters, dest, query, args...)
+	return
+}
+
+// GetContext on slaves.
+// Any placeholder parameters are replaced with supplied args.
+// An error is returned if the result set is empty.
+func (dbs *DBs) GetContext(ctx context.Context, dest interface{}, query string, args ...interface{}) (err error) {
+	_, err = _get(ctx, dbs.slaves, dest, query, args...)
+	return
+}
+
+// GetContextOnMaster on masters.
+// Any placeholder parameters are replaced with supplied args.
+// An error is returned if the result set is empty.
+func (dbs *DBs) GetContextOnMaster(ctx context.Context, dest interface{}, query string, args ...interface{}) (err error) {
+	_, err = _get(ctx, dbs.masters, dest, query, args...)
+	return
+}
+
+func _exec(ctx context.Context, target *dbBalancer, query string, args ...interface{}) (res sql.Result, err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			res, err = nil, fmt.Errorf("%v", e)
 		}
 	}()
 
@@ -1205,26 +1483,283 @@ func _exec(target *dbBalancer, query string, args ...interface{}) (res sql.Resul
 			ping(db.db)
 		}
 
-		r, e := db.db.Exec(query, args...)
-
-		if e = parseError(db.db, e); e == ErrNetwork {
+		res, err = db.db.ExecContext(ctx, query, args...)
+		if err = parseError(db.db, err); err == ErrNetwork {
 			target.failure(db)
 			continue
 		}
 
-		if e != nil && target.isWsrep && (strings.HasPrefix(e.Error(), "ERROR 1047") || strings.HasPrefix(e.Error(), "Error 1047")) { // for galera cluster
+		if err != nil && target.isWsrep && (strings.HasPrefix(err.Error(), "ERROR 1047") || strings.HasPrefix(err.Error(), "Error 1047")) { // for galera cluster
 			target.failure(db)
 			continue
 		}
 
-		return r, e
+		return
 	}
 }
 
-// MustBegin starts a transaction, and panics on error.  Returns an *sqlx.Tx instead
-// of an *sql.Tx.
+// Exec do exec on masters
+func (dbs *DBs) Exec(query string, args ...interface{}) (sql.Result, error) {
+	return _exec(context.Background(), dbs.masters, query, args...)
+}
+
+// ExecOnSlave do exec on slave only
+func (dbs *DBs) ExecOnSlave(query string, args ...interface{}) (sql.Result, error) {
+	return _exec(context.Background(), dbs.slaves, query, args...)
+}
+
+// ExecContext do exec on masters
+func (dbs *DBs) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	return _exec(ctx, dbs.masters, query, args...)
+}
+
+// ExecContextOnSlave do exec on slave only
+func (dbs *DBs) ExecContextOnSlave(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	return _exec(ctx, dbs.slaves, query, args...)
+}
+
+func _prepareContext(ctx context.Context, target *dbBalancer, query string) (dbx *sqlx.DB, stmt *sql.Stmt, err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			err = fmt.Errorf("%v", e)
+		}
+	}()
+
+	if target == nil {
+		return nil, nil, ErrNoConnection
+	}
+
+	var db *dbLinkListNode
+
+	for {
+		if db, err = getDBFromBalancer(target); err != nil {
+			return
+		}
+
+		if db.db == nil {
+			target.failure(db)
+			continue
+		}
+
+		dbx = db.db
+		stmt, err = dbx.PrepareContext(ctx, query)
+		return
+	}
+}
+
+// Prepare creates a prepared statement for later queries or executions on masters.
+// Multiple queries or executions may be run concurrently from the
+// returned statement.
+// The caller must call the statement's Close method
+// when the statement is no longer needed.
+func (dbs *DBs) Prepare(query string) (db *sqlx.DB, stmt *sql.Stmt, err error) {
+	return _prepareContext(context.Background(), dbs.masters, query)
+}
+
+// PrepareOnSlave creates a prepared statement for later queries or executions on slaves.
+// Multiple queries or executions may be run concurrently from the
+// returned statement.
+// The caller must call the statement's Close method
+// when the statement is no longer needed.
+func (dbs *DBs) PrepareOnSlave(query string) (db *sqlx.DB, stmt *sql.Stmt, err error) {
+	return _prepareContext(context.Background(), dbs.slaves, query)
+}
+
+// PrepareContext creates a prepared statement for later queries or executions on masters.
+// Multiple queries or executions may be run concurrently from the
+// returned statement.
+// The caller must call the statement's Close method
+// when the statement is no longer needed.
+func (dbs *DBs) PrepareContext(ctx context.Context, query string) (db *sqlx.DB, stmt *sql.Stmt, err error) {
+	return _prepareContext(ctx, dbs.masters, query)
+}
+
+// PrepareContextOnSlave creates a prepared statement for later queries or executions on slaves.
+// Multiple queries or executions may be run concurrently from the
+// returned statement.
+// The caller must call the statement's Close method
+// when the statement is no longer needed.
+func (dbs *DBs) PrepareContextOnSlave(ctx context.Context, query string) (db *sqlx.DB, stmt *sql.Stmt, err error) {
+	return _prepareContext(ctx, dbs.slaves, query)
+}
+
+func _preparexContext(ctx context.Context, target *dbBalancer, query string) (dbx *sqlx.DB, stmt *sqlx.Stmt, err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			err = fmt.Errorf("%v", e)
+		}
+	}()
+
+	if target == nil {
+		return nil, nil, ErrNoConnection
+	}
+
+	var db *dbLinkListNode
+
+	for {
+		if db, err = getDBFromBalancer(target); err != nil {
+			return
+		}
+
+		if db.db == nil {
+			target.failure(db)
+			continue
+		}
+
+		dbx = db.db
+		stmt, err = dbx.PreparexContext(ctx, query)
+		return
+	}
+}
+
+// Preparex creates a prepared statement for later queries or executions on masters.
+// But return sqlx.Stmt instead of sql.Stmt.
+// Multiple queries or executions may be run concurrently from the
+// returned statement.
+// The caller must call the statement's Close method
+// when the statement is no longer needed.
+func (dbs *DBs) Preparex(query string) (db *sqlx.DB, stmt *sqlx.Stmt, err error) {
+	return _preparexContext(context.Background(), dbs.masters, query)
+}
+
+// PreparexOnSlave creates a prepared statement for later queries or executions on slaves.
+// But return sqlx.Stmt instead of sql.Stmt.
+// Multiple queries or executions may be run concurrently from the
+// returned statement.
+// The caller must call the statement's Close method
+// when the statement is no longer needed.
+func (dbs *DBs) PreparexOnSlave(query string) (db *sqlx.DB, stmt *sqlx.Stmt, err error) {
+	return _preparexContext(context.Background(), dbs.slaves, query)
+}
+
+// PreparexContext creates a prepared statement for later queries or executions on masters.
+// But return sqlx.Stmt instead of sql.Stmt.
+// Multiple queries or executions may be run concurrently from the
+// returned statement.
+// The caller must call the statement's Close method
+// when the statement is no longer needed.
+func (dbs *DBs) PreparexContext(ctx context.Context, query string) (db *sqlx.DB, stmt *sqlx.Stmt, err error) {
+	return _preparexContext(ctx, dbs.masters, query)
+}
+
+// PreparexContextOnSlave creates a prepared statement for later queries or executions on slaves.
+// But return sqlx.Stmt instead of sql.Stmt.
+// Multiple queries or executions may be run concurrently from the
+// returned statement.
+// The caller must call the statement's Close method
+// when the statement is no longer needed.
+func (dbs *DBs) PreparexContextOnSlave(ctx context.Context, query string) (db *sqlx.DB, stmt *sqlx.Stmt, err error) {
+	return _preparexContext(ctx, dbs.slaves, query)
+}
+
+func _prepareNamedContext(ctx context.Context, target *dbBalancer, query string) (dbx *sqlx.DB, stmt *sqlx.NamedStmt, err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			err = fmt.Errorf("%v", e)
+		}
+	}()
+
+	if target == nil {
+		return nil, nil, ErrNoConnection
+	}
+
+	var db *dbLinkListNode
+
+	for {
+		if db, err = getDBFromBalancer(target); err != nil {
+			return
+		}
+
+		if db.db == nil {
+			target.failure(db)
+			continue
+		}
+
+		dbx = db.db
+		stmt, err = dbx.PrepareNamedContext(ctx, query)
+		return
+	}
+}
+
+// PrepareNamed returns an sqlx.NamedStmt on masters
+func (dbs *DBs) PrepareNamed(query string) (db *sqlx.DB, stmt *sqlx.NamedStmt, err error) {
+	return _prepareNamedContext(context.Background(), dbs.masters, query)
+}
+
+// PrepareNamedOnSlave returns an sqlx.NamedStmt on slaves
+func (dbs *DBs) PrepareNamedOnSlave(query string) (db *sqlx.DB, stmt *sqlx.NamedStmt, err error) {
+	return _prepareNamedContext(context.Background(), dbs.slaves, query)
+}
+
+// PrepareNamedContext returns an sqlx.NamedStmt on masters
+func (dbs *DBs) PrepareNamedContext(ctx context.Context, query string) (db *sqlx.DB, stmt *sqlx.NamedStmt, err error) {
+	return _prepareNamedContext(ctx, dbs.masters, query)
+}
+
+// PrepareNamedContextOnSlave returns an sqlx.NamedStmt on slaves
+func (dbs *DBs) PrepareNamedContextOnSlave(ctx context.Context, query string) (db *sqlx.DB, stmt *sqlx.NamedStmt, err error) {
+	return _prepareNamedContext(ctx, dbs.slaves, query)
+}
+
+func _mustExec(ctx context.Context, target *dbBalancer, query string, args ...interface{}) (res sql.Result) {
+	if target == nil {
+		panic(ErrNoConnection)
+	}
+
+	var db *dbLinkListNode
+	var err error
+	for {
+		if db, err = getDBFromBalancer(target); err != nil {
+			panic(err)
+		}
+
+		if db.db == nil {
+			target.failure(db)
+			continue
+		} else {
+			// try to ping db first. Tradeoff a little performance for auto-reset db connection when DBMS restarted
+			ping(db.db)
+		}
+
+		res = db.db.MustExecContext(ctx, query, args...)
+		return
+	}
+}
+
+// MustExec do exec on masters and panic on error
+func (dbs *DBs) MustExec(query string, args ...interface{}) sql.Result {
+	return _mustExec(context.Background(), dbs.masters, query, args...)
+}
+
+// MustExecOnSlave do exec on slave only and panic on error
+func (dbs *DBs) MustExecOnSlave(query string, args ...interface{}) sql.Result {
+	return _mustExec(context.Background(), dbs.slaves, query, args...)
+}
+
+// MustExecContext do exec on masters and panic on error
+func (dbs *DBs) MustExecContext(ctx context.Context, query string, args ...interface{}) sql.Result {
+	return _mustExec(ctx, dbs.masters, query, args...)
+}
+
+// MustExecContextOnSlave do exec on slave only and panic on error
+func (dbs *DBs) MustExecContextOnSlave(ctx context.Context, query string, args ...interface{}) sql.Result {
+	return _mustExec(ctx, dbs.slaves, query, args...)
+}
+
+// MustBegin starts a transaction, and panics on error.
 // Transaction is bound to one of master connections.
-func (dbs *DBs) MustBegin() *sqlx.Tx {
+func (dbs *DBs) MustBegin() *sql.Tx {
+	tx, err := dbs.Begin()
+	if err != nil {
+		panic(err)
+	}
+	return tx
+}
+
+// MustBeginx starts a transaction, and panics on error.
+// Returns an *sqlx.Tx instead of an *sql.Tx.
+// Transaction is bound to one of master connections.
+func (dbs *DBs) MustBeginx() *sqlx.Tx {
 	tx, err := dbs.Beginx()
 	if err != nil {
 		panic(err)
