@@ -613,7 +613,7 @@ func TestGlobalFunc(t *testing.T) {
 		t.Fatal("Test BindNamed failed")
 	}
 
-	dsn := "user=test1 dbname=test1 sslmode=disable"
+	dsn := "user=test1 dbname=test2 sslmode=disable"
 	db1, _ := sqlx.Open("postgres", dsn)
 	db2, _ := sqlx.Open("postgres", dsn)
 	db3, _ := sqlx.Open("postgres", dsn)
@@ -633,8 +633,8 @@ func TestGlobalFunc(t *testing.T) {
 	dbB.init(-1, 2, true)
 	dbB.add(db1)
 	dbB.add(db2)
-	if _, _, err := _query(context.Background(), dbB, "SELECT 1"); err != nil {
-		t.Fatal("_query fail")
+	if _, _, err := _query(context.Background(), dbB, "SELECT 1"); err != ErrNoConnectionOrWsrep {
+		t.Fatal("_query fail", err)
 	}
 	dbB.destroy()
 
@@ -643,7 +643,7 @@ func TestGlobalFunc(t *testing.T) {
 	dbB.add(db1)
 	dbB.add(db2)
 	tmp := 1
-	if _, err := _get(context.Background(), dbB, &tmp, "SELECT 1"); err != nil {
+	if _, err := _get(context.Background(), dbB, &tmp, "SELECT 1"); err != ErrNoConnectionOrWsrep {
 		t.Fatal("_get fail")
 	}
 	dbB.destroy()
