@@ -100,7 +100,7 @@ func (s Schema) Postgres() (string, string) {
 
 func (s Schema) MySQL() (string, string) {
 	f1 := strings.Replace(s.create, `"`, "`", -1)
-	f2 := strings.Replace(f1, "now()", "CURRENT_TIMESTAMP", -1)
+	f2 := strings.Replace(f1, "date default now()", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP", -1)
 	return f2, s.drop
 }
 
