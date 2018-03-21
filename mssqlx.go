@@ -275,15 +275,14 @@ func (c *dbBalancer) setHealthCheckPeriod(period uint64) {
 	}
 }
 
-// WsrepVariable ...
-type WsrepVariable struct {
+type wsrepVariable struct {
 	VariableName string `db:"Variable_name"`
 	Value        string `db:"Value"`
 }
 
 // checkWsrepReady check if wsrep is in ready state
 func (c *dbBalancer) checkWsrepReady(db *sqlx.DB) bool {
-	var tmp WsrepVariable
+	var tmp wsrepVariable
 	if err := db.Get(&tmp, "SHOW VARIABLES LIKE 'wsrep_on'"); err != nil {
 		return false
 	}
@@ -940,25 +939,25 @@ func _namedQuery(ctx context.Context, target *dbBalancer, query string, arg inte
 	}
 }
 
-// NamedQuery using this DB.
+// NamedQuery do named query.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedQuery(query string, arg interface{}) (*sqlx.Rows, error) {
 	return _namedQuery(context.Background(), dbs.slaves, query, arg)
 }
 
-// NamedQueryOnMaster using this DB.
+// NamedQueryOnMaster do named query on master.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedQueryOnMaster(query string, arg interface{}) (*sqlx.Rows, error) {
 	return _namedQuery(context.Background(), dbs.masters, query, arg)
 }
 
-// NamedQueryContext using this DB.
+// NamedQueryContext do named query with context.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedQueryContext(ctx context.Context, query string, arg interface{}) (*sqlx.Rows, error) {
 	return _namedQuery(ctx, dbs.slaves, query, arg)
 }
 
-// NamedQueryContextOnMaster using this DB.
+// NamedQueryContextOnMaster do named query with context on master.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedQueryContextOnMaster(ctx context.Context, query string, arg interface{}) (*sqlx.Rows, error) {
 	return _namedQuery(ctx, dbs.masters, query, arg)
@@ -1005,25 +1004,25 @@ func _namedExec(ctx context.Context, target *dbBalancer, query string, arg inter
 	}
 }
 
-// NamedExec using this DB.
+// NamedExec do named exec.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedExec(query string, arg interface{}) (sql.Result, error) {
 	return _namedExec(context.Background(), dbs.masters, query, arg)
 }
 
-// NamedExecOnSlave using this DB.
+// NamedExecOnSlave do named exec on slave.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedExecOnSlave(query string, arg interface{}) (sql.Result, error) {
 	return _namedExec(context.Background(), dbs.slaves, query, arg)
 }
 
-// NamedExecContext using this DB.
+// NamedExecContext do named exec with context.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedExecContext(ctx context.Context, query string, arg interface{}) (sql.Result, error) {
 	return _namedExec(ctx, dbs.masters, query, arg)
 }
 
-// NamedExecContextOnSlave using this DB.
+// NamedExecContextOnSlave do named exec with context on slave.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedExecContextOnSlave(ctx context.Context, query string, arg interface{}) (sql.Result, error) {
 	return _namedExec(ctx, dbs.slaves, query, arg)
@@ -1350,28 +1349,28 @@ func _select(ctx context.Context, target *dbBalancer, dest interface{}, query st
 	}
 }
 
-// Select on slaves.
+// Select do select on slaves.
 // Any placeholder parameters are replaced with supplied args.
 func (dbs *DBs) Select(dest interface{}, query string, args ...interface{}) (err error) {
 	_, err = _select(context.Background(), dbs.slaves, dest, query, args...)
 	return
 }
 
-// SelectOnMaster select on master.
+// SelectOnMaster do select on masters.
 // Any placeholder parameters are replaced with supplied args.
 func (dbs *DBs) SelectOnMaster(dest interface{}, query string, args ...interface{}) (err error) {
 	_, err = _select(context.Background(), dbs.masters, dest, query, args...)
 	return
 }
 
-// SelectContext on slaves.
+// SelectContext do select on slaves with context.
 // Any placeholder parameters are replaced with supplied args.
 func (dbs *DBs) SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) (err error) {
 	_, err = _select(ctx, dbs.slaves, dest, query, args...)
 	return
 }
 
-// SelectContextOnMaster select on master.
+// SelectContextOnMaster do select on masters with context.
 // Any placeholder parameters are replaced with supplied args.
 func (dbs *DBs) SelectContextOnMaster(ctx context.Context, dest interface{}, query string, args ...interface{}) (err error) {
 	_, err = _select(ctx, dbs.masters, dest, query, args...)
@@ -1498,22 +1497,22 @@ func _exec(ctx context.Context, target *dbBalancer, query string, args ...interf
 	}
 }
 
-// Exec do exec on masters
+// Exec do exec on masters.
 func (dbs *DBs) Exec(query string, args ...interface{}) (sql.Result, error) {
 	return _exec(context.Background(), dbs.masters, query, args...)
 }
 
-// ExecOnSlave do exec on slave only
+// ExecOnSlave do exec on slaves.
 func (dbs *DBs) ExecOnSlave(query string, args ...interface{}) (sql.Result, error) {
 	return _exec(context.Background(), dbs.slaves, query, args...)
 }
 
-// ExecContext do exec on masters
+// ExecContext do exec on masters with context
 func (dbs *DBs) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	return _exec(ctx, dbs.masters, query, args...)
 }
 
-// ExecContextOnSlave do exec on slave only
+// ExecContextOnSlave do exec on slaves with context
 func (dbs *DBs) ExecContextOnSlave(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	return _exec(ctx, dbs.slaves, query, args...)
 }
