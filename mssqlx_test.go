@@ -278,26 +278,30 @@ func TestParseError(t *testing.T) {
 	db, _ := sqlx.Open("postgres", "user=test1 dbname=test2 sslmode=disable")
 
 	errT = fmt.Errorf("abc")
-	if err = parseError(db, errT); err != ErrNetwork {
+	if err = parseError(&sqlxWrapper{db: db, dsn: "user=test1 dbname=test2 sslmode=disable"}, errT); err != ErrNetwork {
 		t.Fatal(err)
 	}
 }
 
 func TestDbLinkListNode(t *testing.T) {
-	db1, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
-	llNode1 := &dbLinkListNode{db: db1}
-	if llNode1.GetDB() != db1 {
+	dsn1 := "user=test1 dbname=test1 sslmode=disable"
+	db1, _ := sqlx.Open("postgres", dsn1)
+	llNode1 := &dbLinkListNode{db: &sqlxWrapper{db: db1, dsn: dsn1}}
+	if llNode1.GetDB().db != db1 {
 		t.Fatal("dbLinkListNode is not set properly")
 	}
 
-	db2, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
-	llNode2 := &dbLinkListNode{db: db2}
+	dsn2 := "user=test1 dbname=test1 sslmode=disable"
+	db2, _ := sqlx.Open("postgres", dsn2)
+	llNode2 := &dbLinkListNode{db: &sqlxWrapper{db: db2, dsn: dsn2}}
 
-	db3, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
-	llNode3 := &dbLinkListNode{db: db3}
+	dsn3 := "user=test1 dbname=test1 sslmode=disable"
+	db3, _ := sqlx.Open("postgres", dsn3)
+	llNode3 := &dbLinkListNode{db: &sqlxWrapper{db: db3, dsn: dsn3}}
 
-	db4, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
-	llNode4 := &dbLinkListNode{db: db4}
+	dsn4 := "user=test1 dbname=test1 sslmode=disable"
+	db4, _ := sqlx.Open("postgres", dsn4)
+	llNode4 := &dbLinkListNode{db: &sqlxWrapper{db: db4, dsn: dsn4}}
 
 	ll := dbLinkList{}
 
@@ -421,38 +425,40 @@ func TestDbBalancer(t *testing.T) {
 		t.Fatal("DbBalancer: setHealthCheckPeriod fail")
 	}
 
-	db1, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
-	db2, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
-	db3, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
-	db4, _ := sqlx.Open("postgres", "user=test1 dbname=test1 sslmode=disable")
+	dsn := "user=test1 dbname=test1 sslmode=disable"
+	db1, _ := sqlx.Open("postgres", dsn)
+	db2, _ := sqlx.Open("postgres", dsn)
+	db3, _ := sqlx.Open("postgres", dsn)
+	db4, _ := sqlx.Open("postgres", dsn)
 
 	dbB.add(nil)
-	dbB.add(db1)
-	dbB.add(db2)
-	dbB.add(db3)
-	dbB.add(db4)
+	dbB.add(&sqlxWrapper{db: db1, dsn: dsn})
+	dbB.add(&sqlxWrapper{db: db2, dsn: dsn})
+	dbB.add(&sqlxWrapper{db: db3, dsn: dsn})
+	dbB.add(&sqlxWrapper{db: db4, dsn: dsn})
+
 	if dbB.dbs.size != 4 {
 		t.Fatal("DbBalancer: add fail")
 	}
 
-	if x := dbB.get(true); x.db != db1 {
+	if x := dbB.get(true); x.db.db != db1 {
 		t.Fatal("DbBalancer: get fail")
 	}
 
-	if x := dbB.get(false); x.db != db2 {
+	if x := dbB.get(false); x.db.db != db2 {
 		t.Fatal("DbBalancer: get fail")
 	}
 
-	if x := dbB.get(true); x.db != db2 {
+	if x := dbB.get(true); x.db.db != db2 {
 		t.Fatal("DbBalancer: get fail")
 	}
 
-	if x := dbB.get(false); x.db != db3 {
+	if x := dbB.get(false); x.db.db != db3 {
 		t.Fatal("DbBalancer: get fail")
 	} else {
 		dbB.failure(x)
 
-		if dbB.dbs.size != 3 || dbB.checkWsrepReady(db3) {
+		if dbB.dbs.size != 3 || dbB.checkWsrepReady(&sqlxWrapper{db: db3, dsn: dsn}) {
 			t.Fatal("DbBalancer: failure fail")
 		}
 	}
@@ -487,7 +493,7 @@ func TestConnectMasterSlave(t *testing.T) {
 
 	// test another ping
 	for _, v := range db._all {
-		if v != nil && ping(v) != nil {
+		if v.db != nil && ping(v) != nil {
 			t.Fatal("Ping fail")
 		}
 	}
@@ -532,13 +538,10 @@ func TestConnectMasterSlave(t *testing.T) {
 		t.Fatal("StatsSlave fail")
 	}
 
-	if slaves, c := db.GetAllSlaves(); c != 2 {
+	if _, c := db.GetAllSlaves(); c != 2 {
 		t.Fatal("GetAllSlaves fail")
-	} else {
-		if errs := _ping(slaves); errs == nil || len(errs) != 2 {
-			t.Fatal("_ping fail")
-		}
 	}
+
 	if _, c := db.GetAllMasters(); c != 3 {
 		t.Fatal("GetAllMasters fail")
 	}
@@ -578,7 +581,7 @@ func TestConnectMasterSlave(t *testing.T) {
 func TestGlobalFunc(t *testing.T) {
 	// test set mapper func
 	_mapperFunc(nil, nil)
-	_mapperFunc([]*sqlx.DB{}, nil)
+	_mapperFunc([]*sqlxWrapper{}, nil)
 	dbs := DBs{}
 	dbs.MapperFunc(nil)
 	dbs.MapperFuncMaster(nil)
@@ -592,12 +595,8 @@ func TestGlobalFunc(t *testing.T) {
 	if rb := dbs.Rebind("SELECT * FROM test"); rb != "" {
 		t.Fatal("Test rebind fail", rb)
 	}
-	dbs._all = []*sqlx.DB{nil}
+	dbs._all = []*sqlxWrapper{nil}
 	if rb := dbs.Rebind("SELECT * FROM test"); rb != "" {
-		t.Fatal("Test rebind fail", rb)
-	}
-	dbs._all = []*sqlx.DB{{}}
-	if rb := dbs.Rebind("SELECT * FROM test"); rb != "SELECT * FROM test" {
 		t.Fatal("Test rebind fail", rb)
 	}
 
@@ -606,20 +605,24 @@ func TestGlobalFunc(t *testing.T) {
 	if _, _, e := dbs.BindNamed("DELETE FROM person WHERE first_name=:first_name", "John"); e != ErrNoConnection {
 		t.Fatal("Test BindNamed failed")
 	}
-	dbs._all = []*sqlx.DB{}
+	dbs._all = []*sqlxWrapper{}
 	if _, _, e := dbs.BindNamed("DELETE FROM person WHERE first_name=:first_name", "John"); e != ErrNoConnection {
 		t.Fatal("Test BindNamed failed")
 	}
-	dbs._all = []*sqlx.DB{nil}
+	dbs._all = []*sqlxWrapper{nil}
 	if _, _, e := dbs.BindNamed("DELETE FROM person WHERE first_name=:first_name", "John"); e != ErrNoConnection {
 		t.Fatal("Test BindNamed failed")
 	}
 
 	dsn := "user=test1 dbname=test2 sslmode=disable"
-	db1, _ := sqlx.Open("postgres", dsn)
-	db2, _ := sqlx.Open("postgres", dsn)
-	db3, _ := sqlx.Open("postgres", dsn)
-	db4, _ := sqlx.Open("postgres", dsn)
+	_db1, _ := sqlx.Open("postgres", dsn)
+	db1 := &sqlxWrapper{db: _db1, dsn: dsn}
+	_db2, _ := sqlx.Open("postgres", dsn)
+	db2 := &sqlxWrapper{db: _db2, dsn: dsn}
+	_db3, _ := sqlx.Open("postgres", dsn)
+	db3 := &sqlxWrapper{db: _db3, dsn: dsn}
+	_db4, _ := sqlx.Open("postgres", dsn)
+	db4 := &sqlxWrapper{db: _db4, dsn: dsn}
 
 	dbB := &dbBalancer{}
 	dbB.init(-1, 4, true)
@@ -651,50 +654,50 @@ func TestGlobalFunc(t *testing.T) {
 	dbB.destroy()
 
 	// check mapper func to see panic occurring
-	_mapperFunc([]*sqlx.DB{db1, db2}, nil)
+	_mapperFunc([]*sqlxWrapper{db1, db2}, nil)
 
 	// check ping
 	if errs := _ping(nil); errs != nil {
 		t.Fatal("Ping fail")
 	}
-	if errs := _ping([]*sqlx.DB{}); errs != nil {
+	if errs := _ping([]*sqlxWrapper{}); errs != nil {
 		t.Fatal("Ping fail")
 	}
 
 	// check close
-	if errs := _close([]*sqlx.DB{db1, db2}); errs == nil || len(errs) != 2 {
+	if errs := _close([]*sqlxWrapper{db1, db2}); errs == nil || len(errs) != 2 {
 		t.Fatal("_close fail")
 	}
 	if errs := _close(nil); errs != nil {
 		t.Fatal("_close fail")
 	}
-	if errs := _close([]*sqlx.DB{}); errs != nil {
+	if errs := _close([]*sqlxWrapper{}); errs != nil {
 		t.Fatal("_close fail")
 	}
 
 	// check set max idle conns
-	_setMaxIdleConns([]*sqlx.DB{}, 12)
+	_setMaxIdleConns([]*sqlxWrapper{}, 12)
 	_setMaxIdleConns(nil, 12)
-	_setMaxIdleConns([]*sqlx.DB{db3, db4}, 12)
+	_setMaxIdleConns([]*sqlxWrapper{db3, db4}, 12)
 
 	// check set max conns
-	_setMaxOpenConns([]*sqlx.DB{}, 16)
+	_setMaxOpenConns([]*sqlxWrapper{}, 16)
 	_setMaxOpenConns(nil, 16)
-	_setMaxOpenConns([]*sqlx.DB{db3, db4}, 16)
+	_setMaxOpenConns([]*sqlxWrapper{db3, db4}, 16)
 
 	// check setConnMaxLifetime
-	_setConnMaxLifetime([]*sqlx.DB{}, 16*time.Second)
+	_setConnMaxLifetime([]*sqlxWrapper{}, 16*time.Second)
 	_setConnMaxLifetime(nil, 16*time.Second)
-	_setConnMaxLifetime([]*sqlx.DB{db3, db4}, 16*time.Second)
+	_setConnMaxLifetime([]*sqlxWrapper{db3, db4}, 16*time.Second)
 
 	// check stats
 	if stats := _stats(nil); stats != nil {
 		t.Fatal("_stats fail")
 	}
-	if stats := _stats([]*sqlx.DB{}); stats != nil {
+	if stats := _stats([]*sqlxWrapper{}); stats != nil {
 		t.Fatal("_stats fail")
 	}
-	if stats := _stats([]*sqlx.DB{db1, db2, db3, db4}); stats == nil || len(stats) != 4 {
+	if stats := _stats([]*sqlxWrapper{db1, db2, db3, db4}); stats == nil || len(stats) != 4 {
 		t.Fatal("_stats fail")
 	}
 }
@@ -1823,7 +1826,7 @@ func TestUsages(t *testing.T) {
 		tx1.Commit()
 		isSlave := false
 		for _, v := range db._slaves {
-			if v == dbx1 {
+			if v.db == dbx1 {
 				isSlave = true
 				break
 			}
@@ -1850,7 +1853,7 @@ func TestUsages(t *testing.T) {
 		tx1.Commit()
 		isSlave = false
 		for _, v := range db._slaves {
-			if v == dbx1 {
+			if v.db == dbx1 {
 				isSlave = true
 				break
 			}
