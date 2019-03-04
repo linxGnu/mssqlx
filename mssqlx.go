@@ -66,7 +66,7 @@ func reportError(title string, err error) {
 
 func reportQueryError(dsn, query string, err error) {
 	if err != nil {
-		os.Stderr.WriteString(fmt.Sprintf("%s;%s;;[%s];;%s;;%s\n", time.Now().Format("2006-01-02 15:04:05"), hostName, dsn, query, err.Error()))
+		os.Stderr.WriteString(fmt.Sprintf("%s;;[%s];;%s;;%s\n", time.Now().Format("2006-01-02 15:04:05"), hostName, query, err.Error()))
 	}
 }
 
