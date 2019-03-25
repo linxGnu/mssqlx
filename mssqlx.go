@@ -60,13 +60,13 @@ func parseError(db *sqlxWrapper, err error) error {
 
 func reportError(title string, err error) {
 	if err != nil {
-		os.Stderr.WriteString(fmt.Sprintf("%s;;%s;;%s;;%s\n", time.Now().Format("2006-01-02 15:04:05"), hostName, title, err.Error()))
+		os.Stderr.WriteString(fmt.Sprintf("mssqlx;;%s;;%s;;%s;;%s\n", time.Now().Format("2006-01-02 15:04:05"), hostName, title, err.Error()))
 	}
 }
 
 func reportQueryError(dsn, query string, err error) {
 	if err != nil {
-		os.Stderr.WriteString(fmt.Sprintf("%s;;[%s];;%s;;%s\n", time.Now().Format("2006-01-02 15:04:05"), hostName, query, err.Error()))
+		os.Stderr.WriteString(fmt.Sprintf("mssqlx;;%s;;[%s];;%s;;%s\n", time.Now().Format("2006-01-02 15:04:05"), hostName, query, err.Error()))
 	}
 }
 
@@ -900,7 +900,7 @@ func getDBFromBalancer(target *dbBalancer) (db *dbLinkListNode, err error) {
 	}
 
 	// retry if there is no connection available. This event could happen when database closes all non-interactive connection.
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 3; i++ {
 		time.Sleep(time.Duration(target.getHealthCheckPeriod()) * time.Millisecond)
 		if db = target.get(target.isMulti); db != nil {
 			return
@@ -915,12 +915,57 @@ func getDBFromBalancer(target *dbBalancer) (db *dbLinkListNode, err error) {
 	return nil, ErrNoConnection
 }
 
+func retryBackoff(dsn, query string, exec func() (interface{}, error)) (v interface{}, err error) {
+	for retry := 0; retry < 200; retry++ {
+		if v, err = exec(); err == nil {
+			return
+		}
+
+		switch err {
+		case sql.ErrConnDone:
+
+		case sql.ErrTxDone, sql.ErrNoRows:
+			return
+
+		default:
+			if isErrBadConn(err) {
+				time.Sleep(5 * time.Millisecond)
+			} else {
+				return
+			}
+		}
+	}
+
+	if err == sql.ErrConnDone || isErrBadConn(err) {
+		reportQueryError(dsn, query, err)
+	}
+
+	return
+}
+
+func shouldFailure(db *sqlxWrapper, isWsrep bool, err error) bool {
+	if err = parseError(db, err); err == nil {
+		return false
+	}
+
+	if err == ErrNetwork ||
+		(isWsrep && (strings.HasPrefix(err.Error(), "ERROR 1047") || strings.HasPrefix(err.Error(), "Error 1047"))) {
+		return true
+	}
+
+	return false
+}
+
 func _namedQuery(ctx context.Context, target *dbBalancer, query string, arg interface{}) (res *sqlx.Rows, err error) {
 	if target == nil {
 		return nil, ErrNoConnection
 	}
 
-	var node *dbLinkListNode
+	var (
+		node *dbLinkListNode
+		r    interface{}
+	)
+
 	for {
 		if node, err = getDBFromBalancer(target); err != nil {
 			reportQueryError("", query, err)
@@ -931,29 +976,15 @@ func _namedQuery(ctx context.Context, target *dbBalancer, query string, arg inte
 			continue
 		}
 
-		res, err = node.db.db.NamedQueryContext(ctx, query, arg)
-		if err != nil && err != sql.ErrNoRows {
-			reportQueryError(node.db.dsn, query, err)
+		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
+			return node.db.db.NamedQueryContext(ctx, query, arg)
+		})
+		if r != nil {
+			res = r.(*sqlx.Rows)
 		}
 
-		// detect driver.ErrBadConn occurring when a connection idle for a long time.
-		// this prevents returning driver.ErrBadConn to application.
-		if isErrBadConn(err) {
-			if ping(node.db) == nil {
-				if res, err = node.db.db.NamedQueryContext(ctx, query, arg); err != nil && err != sql.ErrNoRows {
-					reportQueryError(node.db.dsn, query, err)
-				}
-			}
-		}
-
-		// check networking error
-		if err = parseError(node.db, err); err == ErrNetwork {
-			target.failure(node)
-			continue
-		}
-
-		// check Wsrep error
-		if err != nil && target.isWsrep && (strings.HasPrefix(err.Error(), "ERROR 1047") || strings.HasPrefix(err.Error(), "Error 1047")) { // for galera cluster
+		// check networking/wsrep error
+		if shouldFailure(node.db, target.isWsrep, err) {
 			target.failure(node)
 			continue
 		}
@@ -991,7 +1022,11 @@ func _namedExec(ctx context.Context, target *dbBalancer, query string, arg inter
 		return nil, ErrNoConnection
 	}
 
-	var node *dbLinkListNode
+	var (
+		node *dbLinkListNode
+		r    interface{}
+	)
+
 	for {
 		if node, err = getDBFromBalancer(target); err != nil {
 			reportQueryError("", query, err)
@@ -1003,22 +1038,16 @@ func _namedExec(ctx context.Context, target *dbBalancer, query string, arg inter
 			continue
 		}
 
-		// try to ping db first. Tradeoff a little performance for auto-reset db connection when DBMS restarted
-		ping(node.db)
-
-		// do execute and log error
-		if res, err = node.db.db.NamedExecContext(ctx, query, arg); err != nil && err != sql.ErrNoRows {
-			reportQueryError(node.db.dsn, query, err)
+		// executing
+		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
+			return node.db.db.NamedExecContext(ctx, query, arg)
+		})
+		if r != nil {
+			res = r.(sql.Result)
 		}
 
-		// get error type
-		if err = parseError(node.db, err); err == ErrNetwork {
-			target.failure(node)
-			continue
-		}
-
-		// for galera cluster
-		if err != nil && target.isWsrep && (strings.HasPrefix(err.Error(), "ERROR 1047") || strings.HasPrefix(err.Error(), "Error 1047")) {
+		// check networking/wsrep error
+		if shouldFailure(node.db, target.isWsrep, err) {
 			target.failure(node)
 			continue
 		}
@@ -1056,7 +1085,10 @@ func _query(ctx context.Context, target *dbBalancer, query string, args ...inter
 		return nil, nil, ErrNoConnection
 	}
 
-	var node *dbLinkListNode
+	var (
+		node *dbLinkListNode
+		r    interface{}
+	)
 
 	for {
 		if node, err = getDBFromBalancer(target); err != nil {
@@ -1069,26 +1101,16 @@ func _query(ctx context.Context, target *dbBalancer, query string, args ...inter
 			continue
 		}
 
-		if res, err = node.db.db.QueryContext(ctx, query, args...); err != nil && err != sql.ErrNoRows {
-			reportQueryError(node.db.dsn, query, err)
+		// executing
+		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
+			return node.db.db.QueryContext(ctx, query, args...)
+		})
+		if r != nil {
+			res = r.(*sql.Rows)
 		}
 
-		// detect driver.ErrBadConn occurring when a connection idle for a long time.
-		// this prevents returning driver.ErrBadConn to application.
-		if isErrBadConn(err) {
-			if ping(node.db) == nil {
-				if res, err = node.db.db.QueryContext(ctx, query, args...); err != nil && err != sql.ErrNoRows {
-					reportQueryError(node.db.dsn, query, err)
-				}
-			}
-		}
-
-		if err = parseError(node.db, err); err == ErrNetwork {
-			target.failure(node)
-			continue
-		}
-
-		if err != nil && target.isWsrep && (strings.HasPrefix(err.Error(), "ERROR 1047") || strings.HasPrefix(err.Error(), "Error 1047")) { // for galera cluster
+		// check networking/wsrep error
+		if shouldFailure(node.db, target.isWsrep, err) {
 			target.failure(node)
 			continue
 		}
@@ -1131,7 +1153,11 @@ func _queryx(ctx context.Context, target *dbBalancer, query string, args ...inte
 		return nil, nil, ErrNoConnection
 	}
 
-	var node *dbLinkListNode
+	var (
+		node *dbLinkListNode
+		r    interface{}
+	)
+
 	for {
 		if node, err = getDBFromBalancer(target); err != nil {
 			reportQueryError("", query, err)
@@ -1143,26 +1169,16 @@ func _queryx(ctx context.Context, target *dbBalancer, query string, args ...inte
 			continue
 		}
 
-		if res, err = node.db.db.QueryxContext(ctx, query, args...); err != nil && err != sql.ErrNoRows {
-			reportQueryError(node.db.dsn, query, err)
+		// executing
+		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
+			return node.db.db.QueryxContext(ctx, query, args...)
+		})
+		if r != nil {
+			res = r.(*sqlx.Rows)
 		}
 
-		// detect driver.ErrBadConn occurring when a connection idle for a long time.
-		// this prevents returning driver.ErrBadConn to application.
-		if isErrBadConn(err) {
-			if ping(node.db) == nil {
-				if res, err = node.db.db.QueryxContext(ctx, query, args...); err != nil && err != sql.ErrNoRows {
-					reportQueryError(node.db.dsn, query, err)
-				}
-			}
-		}
-
-		if err = parseError(node.db, err); err == ErrNetwork {
-			target.failure(node)
-			continue
-		}
-
-		if err != nil && target.isWsrep && (strings.HasPrefix(err.Error(), "ERROR 1047") || strings.HasPrefix(err.Error(), "Error 1047")) { // for galera cluster
+		// check networking/wsrep error
+		if shouldFailure(node.db, target.isWsrep, err) {
 			target.failure(node)
 			continue
 		}
@@ -1327,26 +1343,13 @@ func _select(ctx context.Context, target *dbBalancer, dest interface{}, query st
 			continue
 		}
 
-		if err = node.db.db.SelectContext(ctx, dest, query, args...); err != nil && err != sql.ErrNoRows {
-			reportQueryError(node.db.dsn, query, err)
-		}
+		// executing
+		_, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
+			return nil, node.db.db.SelectContext(ctx, dest, query, args...)
+		})
 
-		// detect driver.ErrBadConn occurring when a connection idle for a long time.
-		// this prevents returning driver.ErrBadConn to application.
-		if isErrBadConn(err) {
-			if ping(node.db) == nil {
-				if err = node.db.db.SelectContext(ctx, dest, query, args...); err != nil && err != sql.ErrNoRows {
-					reportQueryError(node.db.dsn, query, err)
-				}
-			}
-		}
-
-		if err = parseError(node.db, err); err == ErrNetwork {
-			target.failure(node)
-			continue
-		}
-
-		if err != nil && target.isWsrep && (strings.HasPrefix(err.Error(), "ERROR 1047") || strings.HasPrefix(err.Error(), "Error 1047")) { // for galera cluster
+		// check networking/wsrep error
+		if shouldFailure(node.db, target.isWsrep, err) {
 			target.failure(node)
 			continue
 		}
@@ -1389,7 +1392,10 @@ func _get(ctx context.Context, target *dbBalancer, dest interface{}, query strin
 		return nil, ErrNoConnection
 	}
 
-	var node *dbLinkListNode
+	var (
+		node *dbLinkListNode
+	)
+
 	for {
 		if node, err = getDBFromBalancer(target); err != nil {
 			reportQueryError("", query, err)
@@ -1401,26 +1407,13 @@ func _get(ctx context.Context, target *dbBalancer, dest interface{}, query strin
 			continue
 		}
 
-		if err = node.db.db.GetContext(ctx, dest, query, args...); err != nil && err != sql.ErrNoRows {
-			reportQueryError(node.db.dsn, query, err)
-		}
+		// executing
+		_, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
+			return nil, node.db.db.GetContext(ctx, dest, query, args...)
+		})
 
-		// detect driver.ErrBadConn occurring when a connection idle for a long time.
-		// this prevents returning driver.ErrBadConn to application.
-		if isErrBadConn(err) {
-			if ping(node.db) == nil {
-				if err = node.db.db.GetContext(ctx, dest, query, args...); err != nil && err != sql.ErrNoRows {
-					reportQueryError(node.db.dsn, query, err)
-				}
-			}
-		}
-
-		if err = parseError(node.db, err); err == ErrNetwork {
-			target.failure(node)
-			continue
-		}
-
-		if err != nil && target.isWsrep && (strings.HasPrefix(err.Error(), "ERROR 1047") || strings.HasPrefix(err.Error(), "Error 1047")) { // for galera cluster
+		// check networking/wsrep error
+		if shouldFailure(node.db, target.isWsrep, err) {
 			target.failure(node)
 			continue
 		}
@@ -1467,7 +1460,11 @@ func _exec(ctx context.Context, target *dbBalancer, query string, args ...interf
 		return nil, ErrNoConnection
 	}
 
-	var node *dbLinkListNode
+	var (
+		node *dbLinkListNode
+		r    interface{}
+	)
+
 	for {
 		if node, err = getDBFromBalancer(target); err != nil {
 			reportQueryError("", query, err)
@@ -1479,20 +1476,16 @@ func _exec(ctx context.Context, target *dbBalancer, query string, args ...interf
 			continue
 		}
 
-		// try to ping db first. Tradeoff a little performance for auto-reset db connection when DBMS restarted
-		ping(node.db)
-
-		// try to execute
-		if res, err = node.db.db.ExecContext(ctx, query, args...); err != nil && err != sql.ErrNoRows {
-			reportQueryError(node.db.dsn, query, err)
+		// executing
+		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
+			return node.db.db.ExecContext(ctx, query, args...)
+		})
+		if r != nil {
+			res = r.(sql.Result)
 		}
 
-		if err = parseError(node.db, err); err == ErrNetwork {
-			target.failure(node)
-			continue
-		}
-
-		if err != nil && target.isWsrep && (strings.HasPrefix(err.Error(), "ERROR 1047") || strings.HasPrefix(err.Error(), "Error 1047")) { // for galera cluster
+		// check networking/wsrep error
+		if shouldFailure(node.db, target.isWsrep, err) {
 			target.failure(node)
 			continue
 		}
@@ -1526,7 +1519,11 @@ func _prepareContext(ctx context.Context, target *dbBalancer, query string) (dbx
 		return nil, nil, ErrNoConnection
 	}
 
-	var node *dbLinkListNode
+	var (
+		node *dbLinkListNode
+		r    interface{}
+	)
+
 	for {
 		if node, err = getDBFromBalancer(target); err != nil {
 			reportQueryError("", query, err)
@@ -1538,8 +1535,21 @@ func _prepareContext(ctx context.Context, target *dbBalancer, query string) (dbx
 			continue
 		}
 
+		// executing
+		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
+			return node.db.db.PrepareContext(ctx, query)
+		})
+		if r != nil {
+			stmt = r.(*sql.Stmt)
+		}
+
+		// check networking/wsrep error
+		if shouldFailure(node.db, target.isWsrep, err) {
+			target.failure(node)
+			continue
+		}
+
 		dbx = node.db.db
-		stmt, err = dbx.PrepareContext(ctx, query)
 		return
 	}
 }
@@ -1585,7 +1595,11 @@ func _preparexContext(ctx context.Context, target *dbBalancer, query string) (db
 		return nil, nil, ErrNoConnection
 	}
 
-	var node *dbLinkListNode
+	var (
+		node *dbLinkListNode
+		r    interface{}
+	)
+
 	for {
 		if node, err = getDBFromBalancer(target); err != nil {
 			reportQueryError("", query, err)
@@ -1597,8 +1611,21 @@ func _preparexContext(ctx context.Context, target *dbBalancer, query string) (db
 			continue
 		}
 
+		// executing
+		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
+			return node.db.db.PreparexContext(ctx, query)
+		})
+		if r != nil {
+			stmt = r.(*sqlx.Stmt)
+		}
+
+		// check networking/wsrep error
+		if shouldFailure(node.db, target.isWsrep, err) {
+			target.failure(node)
+			continue
+		}
+
 		dbx = node.db.db
-		stmt, err = dbx.PreparexContext(ctx, query)
 		return
 	}
 }
@@ -1648,7 +1675,11 @@ func _prepareNamedContext(ctx context.Context, target *dbBalancer, query string)
 		return nil, nil, ErrNoConnection
 	}
 
-	var node *dbLinkListNode
+	var (
+		node *dbLinkListNode
+		r    interface{}
+	)
+
 	for {
 		if node, err = getDBFromBalancer(target); err != nil {
 			reportQueryError("", query, err)
@@ -1660,8 +1691,21 @@ func _prepareNamedContext(ctx context.Context, target *dbBalancer, query string)
 			continue
 		}
 
+		// executing
+		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
+			return node.db.db.PrepareNamedContext(ctx, query)
+		})
+		if r != nil {
+			stmt = r.(*sqlx.NamedStmt)
+		}
+
+		// check networking/wsrep error
+		if shouldFailure(node.db, target.isWsrep, err) {
+			target.failure(node)
+			continue
+		}
+
 		dbx = node.db.db
-		stmt, err = dbx.PrepareNamedContext(ctx, query)
 		return
 	}
 }
@@ -1691,8 +1735,12 @@ func _mustExec(ctx context.Context, target *dbBalancer, query string, args ...in
 		panic(ErrNoConnection)
 	}
 
-	var node *dbLinkListNode
-	var err error
+	var (
+		node *dbLinkListNode
+		err  error
+		r    interface{}
+	)
+
 	for {
 		if node, err = getDBFromBalancer(target); err != nil {
 			panic(err)
@@ -1703,10 +1751,22 @@ func _mustExec(ctx context.Context, target *dbBalancer, query string, args ...in
 			continue
 		}
 
-		// try to ping db first. Tradeoff a little performance for auto-reset db connection when DBMS restarted
-		ping(node.db)
-		res = node.db.db.MustExecContext(ctx, query, args...)
+		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
+			return node.db.db.ExecContext(ctx, query, args...)
+		})
+		if r != nil {
+			res = r.(sql.Result)
+		}
 
+		// check networking/wsrep error
+		if shouldFailure(node.db, target.isWsrep, err) {
+			target.failure(node)
+			continue
+		}
+
+		if err != nil {
+			panic(err)
+		}
 		return
 	}
 }
@@ -1789,9 +1849,14 @@ func (dbs *DBs) Begin() (*sql.Tx, error) {
 // an error will be returned.
 //
 // Transaction is bound to one of master connections.
-func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (res *sql.Tx, err error) {
+	var (
+		node *dbLinkListNode
+		r    interface{}
+	)
+
 	for {
-		node, err := getDBFromBalancer(dbs.masters)
+		node, err = getDBFromBalancer(dbs.masters)
 		if err != nil {
 			reportQueryError("", "BeginTx", err)
 			return nil, err
@@ -1802,16 +1867,35 @@ func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, erro
 			continue
 		}
 
-		return node.db.db.BeginTx(ctx, opts)
+		// executing
+		r, err = retryBackoff(node.db.dsn, "START TRANSACTION", func() (interface{}, error) {
+			return node.db.db.BeginTx(ctx, opts)
+		})
+		if r != nil {
+			res = r.(*sql.Tx)
+		}
+
+		// check networking/wsrep error
+		if shouldFailure(node.db, dbs.masters.isWsrep, err) {
+			dbs.masters.failure(node)
+			continue
+		}
+
+		return
 	}
 }
 
 // Beginx begins a transaction and returns an *sqlx.Tx instead of an *sql.Tx.
 //
 // Transaction is bound to one of master connections.
-func (dbs *DBs) Beginx() (*sqlx.Tx, error) {
+func (dbs *DBs) Beginx() (res *sqlx.Tx, err error) {
+	var (
+		node *dbLinkListNode
+		r    interface{}
+	)
+
 	for {
-		node, err := getDBFromBalancer(dbs.masters)
+		node, err = getDBFromBalancer(dbs.masters)
 		if err != nil {
 			reportQueryError("", "Beginx", err)
 			return nil, err
@@ -1822,7 +1906,21 @@ func (dbs *DBs) Beginx() (*sqlx.Tx, error) {
 			continue
 		}
 
-		return node.db.db.Beginx()
+		// executing
+		r, err = retryBackoff(node.db.dsn, "START TRANSACTION", func() (interface{}, error) {
+			return node.db.db.Beginx()
+		})
+		if r != nil {
+			res = r.(*sqlx.Tx)
+		}
+
+		// check networking/wsrep error
+		if shouldFailure(node.db, dbs.masters.isWsrep, err) {
+			dbs.masters.failure(node)
+			continue
+		}
+
+		return
 	}
 }
 
@@ -1835,9 +1933,14 @@ func (dbs *DBs) Beginx() (*sqlx.Tx, error) {
 // BeginxContext is canceled.
 //
 // Transaction is bound to one of master connections.
-func (dbs *DBs) BeginTxx(ctx context.Context, opts *sql.TxOptions) (*sqlx.Tx, error) {
+func (dbs *DBs) BeginTxx(ctx context.Context, opts *sql.TxOptions) (res *sqlx.Tx, err error) {
+	var (
+		node *dbLinkListNode
+		r    interface{}
+	)
+
 	for {
-		node, err := getDBFromBalancer(dbs.masters)
+		node, err = getDBFromBalancer(dbs.masters)
 		if err != nil {
 			reportQueryError("", "BeginTxx", err)
 			return nil, err
@@ -1848,7 +1951,21 @@ func (dbs *DBs) BeginTxx(ctx context.Context, opts *sql.TxOptions) (*sqlx.Tx, er
 			continue
 		}
 
-		return node.db.db.BeginTxx(ctx, opts)
+		// executing
+		r, err = retryBackoff(node.db.dsn, "START TRANSACTION", func() (interface{}, error) {
+			return node.db.db.BeginTxx(ctx, opts)
+		})
+		if r != nil {
+			res = r.(*sqlx.Tx)
+		}
+
+		// check networking/wsrep error
+		if shouldFailure(node.db, dbs.masters.isWsrep, err) {
+			dbs.masters.failure(node)
+			continue
+		}
+
+		return
 	}
 }
 
