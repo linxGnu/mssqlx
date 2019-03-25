@@ -4,30 +4,31 @@ sudo: required
 language: go
 
 go:
-- 1.8
-- 1.9
-- "1.10"
+  - "1.9"
+  - "1.10"
+  - "1.11"
+  - "1.12"
 
 services:
-- mysql
+  - mysql
 
 addons:
   postgresql: "9.6"
 
 env:
   global:
-  - MSSQLX_MYSQL_DSN="test:test@tcp(localhost:3306)/test"
-  - MSSQLX_POSTGRES_DSN="user=test password=test dbname=test sslmode=disable"
+    - MSSQLX_MYSQL_DSN="test:test@tcp(localhost:3306)/test"
+    - MSSQLX_POSTGRES_DSN="user=test password=test dbname=test sslmode=disable"
 
 before_script:
-- mysql -e "CREATE DATABASE test;"
-- mysql -u root -e "GRANT ALL ON test.* TO test@localhost IDENTIFIED BY 'test'"
-- psql -c "CREATE DATABASE test;" -U postgres
-- psql -c "CREATE USER "test" WITH SUPERUSER PASSWORD 'test';" -U postgres
-- go get github.com/lib/pq
-- go get github.com/mattn/go-sqlite3
-- go get github.com/go-sql-driver/mysql
-- go get github.com/jmoiron/sqlx
-- go get github.com/mattn/goveralls
+  - mysql -e "CREATE DATABASE test;"
+  - mysql -u root -e "GRANT ALL ON test.* TO test@localhost IDENTIFIED BY 'test'"
+  - psql -c "CREATE DATABASE test;" -U postgres
+  - psql -c "CREATE USER "test" WITH SUPERUSER PASSWORD 'test';" -U postgres
+  - go get github.com/lib/pq
+  - go get github.com/mattn/go-sqlite3
+  - go get github.com/go-sql-driver/mysql
+  - go get github.com/jmoiron/sqlx
+  - go get github.com/mattn/goveralls
 
 script: go test -v ./... && $HOME/gopath/bin/goveralls -service=travis-ci
