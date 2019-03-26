@@ -18,10 +18,6 @@ Features and concepts are:
 
 For more detail of api, please refer to [godoc](https://godoc.org/github.com/linxGnu/mssqlx)
 
-## In production
-
-* [iParking](https://iparking.vn) : a large car parking system of Ha Noi with heavy workload.
-
 ## Install
 
     go get -u github.com/linxGnu/mssqlx
