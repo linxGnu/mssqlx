@@ -31,4 +31,4 @@ before_script:
   - go get github.com/jmoiron/sqlx
   - go get github.com/mattn/goveralls
 
-script: go test -v ./... && $HOME/gopath/bin/goveralls -service=travis-ci
+script: go test -count=1 -v -race ./... && $HOME/gopath/bin/goveralls -service=travis-ci

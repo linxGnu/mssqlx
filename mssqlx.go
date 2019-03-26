@@ -3,11 +3,8 @@ package mssqlx
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
-	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -36,342 +33,22 @@ func init() {
 	hostName, _ = os.Hostname()
 }
 
-type sqlxWrapper struct {
-	db  *sqlx.DB
-	dsn string
-}
-
-func ping(db *sqlxWrapper) (err error) {
-	_, err = db.db.Exec("SELECT 1")
+func ping(w *wrapper) (err error) {
+	_, err = w.db.Exec("SELECT 1")
 	return
-}
-
-func parseError(db *sqlxWrapper, err error) error {
-	if err == nil {
-		return nil
-	}
-
-	if db != nil && ping(db) != nil {
-		return ErrNetwork
-	}
-
-	return err
-}
-
-func reportError(title string, err error) {
-	if err != nil {
-		os.Stderr.WriteString(fmt.Sprintf("mssqlx;;%s;;%s;;%s;;%s\n", time.Now().Format("2006-01-02 15:04:05"), hostName, title, err.Error()))
-	}
-}
-
-func reportQueryError(dsn, query string, err error) {
-	if err != nil {
-		os.Stderr.WriteString(fmt.Sprintf("mssqlx;;%s;;[%s];;%s;;%s\n", time.Now().Format("2006-01-02 15:04:05"), hostName, query, err.Error()))
-	}
-}
-
-// dbLinkListNode a node of linked-list contains sqlx.DB
-type dbLinkListNode struct {
-	db   *sqlxWrapper
-	next *dbLinkListNode
-	prev *dbLinkListNode
-}
-
-// DBNode interface of a db node
-type DBNode interface {
-	GetDB() *sqlxWrapper
-}
-
-func (c *dbLinkListNode) GetDB() *sqlxWrapper {
-	return c.db
-}
-
-// dbLinkList a round robin and thread-safe linked-list of sqlx.DB
-type dbLinkList struct {
-	// head and tail of linked-list
-	head *dbLinkListNode
-	tail *dbLinkListNode
-
-	// size of this linked-list
-	size int
-
-	// current point on linked-list
-	current *dbLinkListNode
-
-	lock sync.RWMutex
-}
-
-// Next return next element from current node on linked-list. If current node is last node, the next one is head.
-func (c *dbLinkList) next() (next *dbLinkListNode) {
-	c.lock.RLock()
-	if c.current == nil {
-		c.lock.RUnlock()
-		return
-	}
-	next = c.current.next
-	c.lock.RUnlock()
-	return
-}
-
-// Prev return previous element from current node on linked-list. If current node is head node, the previous one is tail.
-func (c *dbLinkList) prev() (prev *dbLinkListNode) {
-	c.lock.RLock()
-	if c.current == nil {
-		c.lock.RUnlock()
-		return
-	}
-	prev = c.current.prev
-	c.lock.RUnlock()
-	return
-}
-
-// add node to last of linked-list
-func (c *dbLinkList) add(node *dbLinkListNode) {
-	if node == nil || node.db == nil {
-		return
-	}
-
-	// do lock
-	c.lock.Lock()
-
-	// increase size
-	c.size++
-
-	if c.head == nil {
-		c.head, c.tail, c.current = node, node, node
-		node.next = node
-		node.prev = node
-
-		c.lock.Unlock()
-		return
-	}
-
-	node.next, node.prev = c.head, c.tail
-	c.head.prev, c.tail.next = node, node
-
-	c.tail = node
-
-	// do unlock
-	c.lock.Unlock()
-}
-
-// remove a node
-func (c *dbLinkList) remove(node *dbLinkListNode) bool {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-
-	if node == nil || node.next == nil || node.prev == nil || c.size == 0 { // important to prevent double remove
-		return false
-	}
-
-	node.prev.next, node.next.prev = node.next, node.prev
-
-	// Check size
-	if c.size--; c.size == 0 {
-		c.head, c.tail, c.current = nil, nil, nil
-		node.next, node.prev = nil, nil // important to prevent double remove
-
-		return true
-	}
-
-	if c.current == node {
-		c.current = node.next
-	}
-
-	if c.head == node {
-		c.head = node.next
-	}
-
-	if c.tail == node {
-		c.tail = node.prev
-	}
-
-	node.next, node.prev = nil, nil // important to prevent double remove
-	return true
-}
-
-// moveNext get current and make current pointer to next
-func (c *dbLinkList) moveNext() (cur *dbLinkListNode) {
-	c.lock.Lock()
-	if cur = c.current; cur != nil {
-		c.current = cur.next
-	}
-	c.lock.Unlock()
-	return
-}
-
-// movePrev get current and make current pointer to previous
-func (c *dbLinkList) movePrev() (cur *dbLinkListNode) {
-	c.lock.Lock()
-	if cur = c.current; cur != nil {
-		c.current = cur.prev
-	}
-	c.lock.Unlock()
-	return
-}
-
-// getCurrentNode get current pointer node
-func (c *dbLinkList) getCurrentNode() (cur *dbLinkListNode) {
-	c.lock.RLock()
-	cur = c.current
-	c.lock.RUnlock()
-	return
-}
-
-// clear all nodes
-func (c *dbLinkList) clear() {
-	c.lock.Lock()
-	c.head, c.tail, c.current, c.size = nil, nil, nil, 0
-	c.lock.Unlock()
-}
-
-// dbBalancer database balancer and health checker.
-type dbBalancer struct {
-	driverName string
-
-	dbs  *dbLinkList
-	fail chan *sqlxWrapper
-
-	isWsrep bool
-	isMulti bool
-
-	_name string
-
-	numberOfHealthChecker int
-	healthCheckPeriod     int64
-	healthCheckPeriodLock sync.RWMutex
-}
-
-// init balancer and start health checkers
-func (c *dbBalancer) init(numHealthChecker int, numDbInstance int, isWsrep bool) {
-	if numHealthChecker <= 0 {
-		numHealthChecker = 2 // at least two checkers
-	}
-
-	c.numberOfHealthChecker = numHealthChecker
-	c.dbs = &dbLinkList{}
-	c.fail = make(chan *sqlxWrapper, numDbInstance)
-	c.isWsrep = isWsrep
-	c.isMulti = numDbInstance > 1
-
-	c.healthCheckPeriod = DefaultHealthCheckPeriodInMilli
-
-	for i := 0; i < numHealthChecker; i++ {
-		go c.healthChecker()
-	}
-}
-
-// add a db connection to handle in balancer
-func (c *dbBalancer) add(db *sqlxWrapper) {
-	c.dbs.add(&dbLinkListNode{db: db})
-}
-
-// get a db to handle our query
-func (c *dbBalancer) get(autoBalance bool) *dbLinkListNode {
-	if autoBalance {
-		return c.dbs.moveNext()
-	}
-	return c.dbs.getCurrentNode()
-}
-
-// failure make a db node become failure and auto health tracking
-func (c *dbBalancer) failure(node *dbLinkListNode) {
-	defer func() {
-		if e := recover(); e != nil {
-			reportError("Fail to remove node", fmt.Errorf("%v", e))
-		}
-	}()
-
-	if c.dbs.remove(node) { // remove this node
-		c.fail <- node.db // give to health checker
-	}
-}
-
-// setHealthCheckPeriod in miliseconds
-func (c *dbBalancer) setHealthCheckPeriod(period uint64) {
-	c.healthCheckPeriodLock.Lock()
-	if c.healthCheckPeriod = int64(period); c.healthCheckPeriod <= 0 {
-		c.healthCheckPeriod = DefaultHealthCheckPeriodInMilli
-	}
-	c.healthCheckPeriodLock.Unlock()
-}
-
-type wsrepVariable struct {
-	VariableName string `db:"Variable_name"`
-	Value        string `db:"Value"`
-}
-
-// checkWsrepReady check if wsrep is in ready state
-func (c *dbBalancer) checkWsrepReady(db *sqlxWrapper) bool {
-	var tmp wsrepVariable
-	if err := db.db.Get(&tmp, "SHOW VARIABLES LIKE 'wsrep_on'"); err != nil {
-		reportQueryError(db.dsn, "SHOW VARIABLES LIKE 'wsrep_on'", err)
-		return false
-	}
-
-	if tmp.Value != "ON" {
-		return true
-	}
-
-	if err := db.db.Get(&tmp, "SHOW STATUS LIKE 'wsrep_ready'"); err != nil || tmp.Value != "ON" {
-		reportQueryError(db.dsn, "SHOW STATUS LIKE 'wsrep_ready'", err)
-		return false
-	}
-
-	return true
-}
-
-func (c *dbBalancer) getHealthCheckPeriod() (period int64) {
-	c.healthCheckPeriodLock.RLock()
-	period = c.healthCheckPeriod
-	c.healthCheckPeriodLock.RUnlock()
-	return
-}
-
-// healthChecker daemon to check health of db connection
-func (c *dbBalancer) healthChecker() {
-	defer func() {
-		if e := recover(); e != nil {
-			reportError("HealthChecker panic", fmt.Errorf("%v", e))
-		}
-	}()
-
-	for db := range c.fail {
-		if ping(db) == nil && (!c.isWsrep || c.checkWsrepReady(db)) {
-			c.dbs.add(&dbLinkListNode{db: db})
-			continue
-		}
-
-		time.Sleep(time.Duration(c.getHealthCheckPeriod()) * time.Millisecond)
-
-		c.fail <- db
-	}
-}
-
-func (c *dbBalancer) destroy() {
-	c.dbs.clear()
-	close(c.fail)
 }
 
 // DBs sqlx wrapper supports querying master-slave database connections for HA and scalability, auto-balancer integrated.
 type DBs struct {
 	driverName string
 
-	// master connections
-	masters  *dbBalancer
-	_masters []*sqlxWrapper
+	masters *balancer
+	slaves  *balancer
+	all     *balancer
 
-	// slaves connections
-	slaves  *dbBalancer
-	_slaves []*sqlxWrapper
-
-	// master and slave lock
-	masterLock sync.RWMutex
-	slaveLock  sync.RWMutex
-
-	// store all database connections
-	all  *dbBalancer
-	_all []*sqlxWrapper
+	_masters []*wrapper
+	_slaves  []*wrapper
+	_all     []*wrapper
 }
 
 // DriverName returns the driverName passed to the Open function for this DB.
@@ -379,7 +56,7 @@ func (dbs *DBs) DriverName() string {
 	return dbs.driverName
 }
 
-func (dbs *DBs) getDBs(s []*sqlxWrapper) ([]*sqlx.DB, int) {
+func (dbs *DBs) getDBs(s []*wrapper) ([]*sqlx.DB, int) {
 	n := len(s)
 	r := make([]*sqlx.DB, n)
 	for i, v := range s {
@@ -398,7 +75,7 @@ func (dbs *DBs) GetAllSlaves() ([]*sqlx.DB, int) {
 	return dbs.getDBs(dbs._slaves)
 }
 
-func _ping(target []*sqlxWrapper) []error {
+func _ping(target []*wrapper) []error {
 	if target == nil {
 		return nil
 	}
@@ -440,7 +117,7 @@ func (dbs *DBs) PingSlave() []error {
 	return _ping(dbs._slaves)
 }
 
-func _close(target []*sqlxWrapper) []error {
+func _close(target []*wrapper) []error {
 	if target == nil {
 		return nil
 	}
@@ -456,7 +133,7 @@ func _close(target []*sqlxWrapper) []error {
 	for i, db := range target {
 		if db != nil && db.db != nil {
 			wg.Add(1)
-			go func(db *sqlxWrapper, ind int, wg *sync.WaitGroup) {
+			go func(db *wrapper, ind int, wg *sync.WaitGroup) {
 				errResult[ind] = db.db.Close()
 				wg.Done()
 			}(db, i, &wg)
@@ -472,12 +149,6 @@ func _close(target []*sqlxWrapper) []error {
 // It is rare to Close a DB, as the DB handle is meant to be
 // long-lived and shared between many goroutines.
 func (dbs *DBs) Destroy() []error {
-	dbs.masterLock.Lock()
-	defer dbs.masterLock.Unlock()
-
-	dbs.slaveLock.Lock()
-	defer dbs.slaveLock.Unlock()
-
 	res := _close(dbs._all)
 
 	if dbs.masters != nil {
@@ -497,9 +168,6 @@ func (dbs *DBs) Destroy() []error {
 // It is rare to Close a DB, as the DB handle is meant to be
 // long-lived and shared between many goroutines.
 func (dbs *DBs) DestroyMaster() []error {
-	dbs.masterLock.Lock()
-	defer dbs.masterLock.Unlock()
-
 	if dbs.masters != nil {
 		dbs.masters.destroy()
 	}
@@ -512,9 +180,6 @@ func (dbs *DBs) DestroyMaster() []error {
 // It is rare to Close a DB, as the DB handle is meant to be
 // long-lived and shared between many goroutines.
 func (dbs *DBs) DestroySlave() []error {
-	dbs.slaveLock.Lock()
-	defer dbs.slaveLock.Unlock()
-
 	if dbs.slaves != nil {
 		dbs.slaves.destroy()
 	}
@@ -522,7 +187,7 @@ func (dbs *DBs) DestroySlave() []error {
 	return _close(dbs._slaves)
 }
 
-func _setMaxIdleConns(target []*sqlxWrapper, n int) {
+func _setMaxIdleConns(target []*wrapper, n int) {
 	if target == nil {
 		return
 	}
@@ -536,7 +201,7 @@ func _setMaxIdleConns(target []*sqlxWrapper, n int) {
 	for _, db := range target {
 		if db != nil && db.db != nil {
 			wg.Add(1)
-			go func(db *sqlxWrapper, wg *sync.WaitGroup) {
+			go func(db *wrapper, wg *sync.WaitGroup) {
 				db.db.SetMaxIdleConns(n)
 				wg.Done()
 			}(db, &wg)
@@ -550,14 +215,8 @@ func _setMaxIdleConns(target []*sqlxWrapper, n int) {
 //
 // Default is 500
 func (dbs *DBs) SetHealthCheckPeriod(period uint64) {
-	dbs.masterLock.Lock()
-	dbs.slaveLock.Lock()
-
 	dbs.masters.setHealthCheckPeriod(period)
 	dbs.slaves.setHealthCheckPeriod(period)
-
-	dbs.slaveLock.Unlock()
-	dbs.masterLock.Unlock()
 }
 
 // SetMasterHealthCheckPeriod sets the period (in millisecond) for checking health of failed master nodes
@@ -565,9 +224,7 @@ func (dbs *DBs) SetHealthCheckPeriod(period uint64) {
 //
 // Default is 500
 func (dbs *DBs) SetMasterHealthCheckPeriod(period uint64) {
-	dbs.masterLock.Lock()
 	dbs.masters.setHealthCheckPeriod(period)
-	dbs.masterLock.Unlock()
 }
 
 // SetSlaveHealthCheckPeriod sets the period (in millisecond) for checking health of failed slave nodes
@@ -575,9 +232,7 @@ func (dbs *DBs) SetMasterHealthCheckPeriod(period uint64) {
 //
 // Default is 500
 func (dbs *DBs) SetSlaveHealthCheckPeriod(period uint64) {
-	dbs.slaveLock.Lock()
 	dbs.slaves.setHealthCheckPeriod(period)
-	dbs.slaveLock.Unlock()
 }
 
 // SetMaxIdleConns sets the maximum number of connections in the idle
@@ -588,13 +243,7 @@ func (dbs *DBs) SetSlaveHealthCheckPeriod(period uint64) {
 //
 // If n <= 0, no idle connections are retained.
 func (dbs *DBs) SetMaxIdleConns(n int) {
-	dbs.masterLock.Lock()
-	dbs.slaveLock.Lock()
-
 	_setMaxIdleConns(dbs._all, n)
-
-	dbs.slaveLock.Unlock()
-	dbs.masterLock.Unlock()
 }
 
 // SetMasterMaxIdleConns sets the maximum number of connections in the idle
@@ -605,9 +254,7 @@ func (dbs *DBs) SetMaxIdleConns(n int) {
 //
 // If n <= 0, no idle connections are retained.
 func (dbs *DBs) SetMasterMaxIdleConns(n int) {
-	dbs.masterLock.Lock()
 	_setMaxIdleConns(dbs._masters, n)
-	dbs.masterLock.Unlock()
 }
 
 // SetSlaveMaxIdleConns sets the maximum number of connections in the idle
@@ -618,12 +265,10 @@ func (dbs *DBs) SetMasterMaxIdleConns(n int) {
 //
 // If n <= 0, no idle connections are retained.
 func (dbs *DBs) SetSlaveMaxIdleConns(n int) {
-	dbs.slaveLock.Lock()
 	_setMaxIdleConns(dbs._slaves, n)
-	dbs.slaveLock.Unlock()
 }
 
-func _setMaxOpenConns(target []*sqlxWrapper, n int) {
+func _setMaxOpenConns(target []*wrapper, n int) {
 	if target == nil {
 		return
 	}
@@ -637,7 +282,7 @@ func _setMaxOpenConns(target []*sqlxWrapper, n int) {
 	for _, db := range target {
 		if db != nil && db.db != nil {
 			wg.Add(1)
-			go func(db *sqlxWrapper, wg *sync.WaitGroup) {
+			go func(db *wrapper, wg *sync.WaitGroup) {
 				db.db.SetMaxOpenConns(n)
 				wg.Done()
 			}(db, &wg)
@@ -655,13 +300,7 @@ func _setMaxOpenConns(target []*sqlxWrapper, n int) {
 // If n <= 0, then there is no limit on the number of open connections.
 // The default is 0 (unlimited).
 func (dbs *DBs) SetMaxOpenConns(n int) {
-	dbs.masterLock.Lock()
-	dbs.slaveLock.Lock()
-
 	_setMaxOpenConns(dbs._all, n)
-
-	dbs.slaveLock.Unlock()
-	dbs.masterLock.Unlock()
 }
 
 // SetMasterMaxOpenConns sets the maximum number of open connections to the master databases.
@@ -673,9 +312,7 @@ func (dbs *DBs) SetMaxOpenConns(n int) {
 // If n <= 0, then there is no limit on the number of open connections.
 // The default is 0 (unlimited).
 func (dbs *DBs) SetMasterMaxOpenConns(n int) {
-	dbs.masterLock.Lock()
 	_setMaxOpenConns(dbs._masters, n)
-	dbs.masterLock.Unlock()
 }
 
 // SetSlaveMaxOpenConns sets the maximum number of open connections to the slave databases.
@@ -687,12 +324,10 @@ func (dbs *DBs) SetMasterMaxOpenConns(n int) {
 // If n <= 0, then there is no limit on the number of open connections.
 // The default is 0 (unlimited).
 func (dbs *DBs) SetSlaveMaxOpenConns(n int) {
-	dbs.slaveLock.Lock()
 	_setMaxOpenConns(dbs._slaves, n)
-	dbs.slaveLock.Unlock()
 }
 
-func _setConnMaxLifetime(target []*sqlxWrapper, d time.Duration) {
+func _setConnMaxLifetime(target []*wrapper, d time.Duration) {
 	if target == nil {
 		return
 	}
@@ -706,7 +341,7 @@ func _setConnMaxLifetime(target []*sqlxWrapper, d time.Duration) {
 	for _, db := range target {
 		if db != nil && db.db != nil {
 			wg.Add(1)
-			go func(db *sqlxWrapper, wg *sync.WaitGroup) {
+			go func(db *wrapper, wg *sync.WaitGroup) {
 				db.db.SetConnMaxLifetime(d)
 				wg.Done()
 			}(db, &wg)
@@ -721,13 +356,7 @@ func _setConnMaxLifetime(target []*sqlxWrapper, d time.Duration) {
 //
 // If d <= 0, connections are reused forever.
 func (dbs *DBs) SetConnMaxLifetime(d time.Duration) {
-	dbs.masterLock.Lock()
-	dbs.slaveLock.Lock()
-
 	_setConnMaxLifetime(dbs._all, d)
-
-	dbs.slaveLock.Unlock()
-	dbs.masterLock.Unlock()
 }
 
 // SetMasterConnMaxLifetime sets the maximum amount of time a master connection may be reused.
@@ -736,9 +365,7 @@ func (dbs *DBs) SetConnMaxLifetime(d time.Duration) {
 //
 // If d <= 0, connections are reused forever.
 func (dbs *DBs) SetMasterConnMaxLifetime(d time.Duration) {
-	dbs.masterLock.Lock()
 	_setConnMaxLifetime(dbs._masters, d)
-	dbs.masterLock.Unlock()
 }
 
 // SetSlaveConnMaxLifetime sets the maximum amount of time a slave connection may be reused.
@@ -747,12 +374,10 @@ func (dbs *DBs) SetMasterConnMaxLifetime(d time.Duration) {
 //
 // If d <= 0, connections are reused forever.
 func (dbs *DBs) SetSlaveConnMaxLifetime(d time.Duration) {
-	dbs.slaveLock.Lock()
 	_setConnMaxLifetime(dbs._slaves, d)
-	dbs.slaveLock.Unlock()
 }
 
-func _stats(target []*sqlxWrapper) []sql.DBStats {
+func _stats(target []*wrapper) []sql.DBStats {
 	if target == nil {
 		return nil
 	}
@@ -768,7 +393,7 @@ func _stats(target []*sqlxWrapper) []sql.DBStats {
 	for ind, db := range target {
 		if db != nil && db.db != nil {
 			wg.Add(1)
-			go func(db *sqlxWrapper, ind int, wg *sync.WaitGroup) {
+			go func(db *wrapper, ind int, wg *sync.WaitGroup) {
 				result[ind] = db.db.Stats()
 				wg.Done()
 			}(db, ind, &wg)
@@ -781,34 +406,23 @@ func _stats(target []*sqlxWrapper) []sql.DBStats {
 
 // Stats returns database statistics.
 func (dbs *DBs) Stats() (stats []sql.DBStats) {
-	dbs.masterLock.Lock()
-	dbs.slaveLock.Lock()
-
 	stats = _stats(dbs._all)
-
-	dbs.slaveLock.Unlock()
-	dbs.masterLock.Unlock()
-
 	return
 }
 
 // StatsMaster returns master database statistics.
 func (dbs *DBs) StatsMaster() (stats []sql.DBStats) {
-	dbs.masterLock.Lock()
 	stats = _stats(dbs._masters)
-	dbs.masterLock.Unlock()
 	return
 }
 
 // StatsSlave returns slave database statistics.
 func (dbs *DBs) StatsSlave() (stats []sql.DBStats) {
-	dbs.slaveLock.Lock()
 	stats = _stats(dbs._slaves)
-	dbs.slaveLock.Unlock()
 	return
 }
 
-func _mapperFunc(target []*sqlxWrapper, mf func(string) string) {
+func _mapperFunc(target []*wrapper, mf func(string) string) {
 	if target == nil {
 		return
 	}
@@ -822,7 +436,7 @@ func _mapperFunc(target []*sqlxWrapper, mf func(string) string) {
 	for ind, db := range target {
 		if db != nil {
 			wg.Add(1)
-			go func(db *sqlxWrapper, ind int) {
+			go func(db *wrapper, ind int) {
 				db.db.MapperFunc(mf)
 				wg.Done()
 			}(db, ind)
@@ -879,22 +493,7 @@ func (dbs *DBs) BindNamed(query string, arg interface{}) (string, []interface{},
 	return "", nil, ErrNoConnection
 }
 
-func isBadConn(errMessage string) bool {
-	switch errMessage {
-	case "invalid connection":
-		return true
-	case "bad connection":
-		return true
-	}
-	return false
-}
-
-func isErrBadConn(err error) bool {
-	return err == driver.ErrBadConn || // Postgres/Mysql Driver returns default driver.ErrBadConn
-		(err != nil && isBadConn(err.Error())) // fix for Mysql Driver ("github.com/go-sql-driver/mysql")
-}
-
-func getDBFromBalancer(target *dbBalancer) (db *dbLinkListNode, err error) {
+func getDBFromBalancer(target *balancer) (db *wrapper, err error) {
 	if db = target.get(target.isMulti); db != nil {
 		return
 	}
@@ -909,13 +508,15 @@ func getDBFromBalancer(target *dbBalancer) (db *dbLinkListNode, err error) {
 
 	// need to return error
 	if target.isWsrep {
-		return nil, ErrNoConnectionOrWsrep
+		err = ErrNoConnectionOrWsrep
+	} else {
+		err = ErrNoConnection
 	}
 
-	return nil, ErrNoConnection
+	return
 }
 
-func retryBackoff(dsn, query string, exec func() (interface{}, error)) (v interface{}, err error) {
+func retryBackoff(query string, exec func() (interface{}, error)) (v interface{}, err error) {
 	for retry := 0; retry < 200; retry++ {
 		if v, err = exec(); err == nil {
 			return
@@ -930,62 +531,55 @@ func retryBackoff(dsn, query string, exec func() (interface{}, error)) (v interf
 		default:
 			if isErrBadConn(err) {
 				time.Sleep(5 * time.Millisecond)
-			} else {
+			} else if !isDeadlock(err) {
 				return
+			} else {
+				time.Sleep(10 * time.Millisecond)
 			}
 		}
 	}
 
 	if err == sql.ErrConnDone || isErrBadConn(err) {
-		reportQueryError(dsn, query, err)
+		reportError(query, err)
 	}
 
 	return
 }
 
-func shouldFailure(db *sqlxWrapper, isWsrep bool, err error) bool {
-	if err = parseError(db, err); err == nil {
+func shouldFailure(w *wrapper, isWsrep bool, err error) bool {
+	if err = parseError(w, err); err == nil {
 		return false
 	}
 
-	if err == ErrNetwork ||
-		(isWsrep && (strings.HasPrefix(err.Error(), "ERROR 1047") || strings.HasPrefix(err.Error(), "Error 1047"))) {
+	if err == ErrNetwork || (isWsrep && isWsrepNotReady(err)) {
 		return true
 	}
 
 	return false
 }
 
-func _namedQuery(ctx context.Context, target *dbBalancer, query string, arg interface{}) (res *sqlx.Rows, err error) {
-	if target == nil {
-		return nil, ErrNoConnection
-	}
-
+func _namedQuery(ctx context.Context, target *balancer, query string, arg interface{}) (res *sqlx.Rows, err error) {
 	var (
-		node *dbLinkListNode
-		r    interface{}
+		w *wrapper
+		r interface{}
 	)
 
 	for {
-		if node, err = getDBFromBalancer(target); err != nil {
-			reportQueryError("", query, err)
+		if w, err = getDBFromBalancer(target); err != nil {
+			reportError(query, err)
 			return
 		}
-		if node.db == nil {
-			target.failure(node)
-			continue
-		}
 
-		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
-			return node.db.db.NamedQueryContext(ctx, query, arg)
+		r, err = retryBackoff(query, func() (interface{}, error) {
+			return w.db.NamedQueryContext(ctx, query, arg)
 		})
 		if r != nil {
 			res = r.(*sqlx.Rows)
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(node.db, target.isWsrep, err) {
-			target.failure(node)
+		if shouldFailure(w, target.isWsrep, err) {
+			target.failure(w)
 			continue
 		}
 
@@ -1017,38 +611,29 @@ func (dbs *DBs) NamedQueryContextOnMaster(ctx context.Context, query string, arg
 	return _namedQuery(ctx, dbs.masters, query, arg)
 }
 
-func _namedExec(ctx context.Context, target *dbBalancer, query string, arg interface{}) (res sql.Result, err error) {
-	if target == nil {
-		return nil, ErrNoConnection
-	}
-
+func _namedExec(ctx context.Context, target *balancer, query string, arg interface{}) (res sql.Result, err error) {
 	var (
-		node *dbLinkListNode
-		r    interface{}
+		w *wrapper
+		r interface{}
 	)
 
 	for {
-		if node, err = getDBFromBalancer(target); err != nil {
-			reportQueryError("", query, err)
+		if w, err = getDBFromBalancer(target); err != nil {
+			reportError(query, err)
 			return
 		}
 
-		if node.db == nil {
-			target.failure(node)
-			continue
-		}
-
 		// executing
-		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
-			return node.db.db.NamedExecContext(ctx, query, arg)
+		r, err = retryBackoff(query, func() (interface{}, error) {
+			return w.db.NamedExecContext(ctx, query, arg)
 		})
 		if r != nil {
 			res = r.(sql.Result)
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(node.db, target.isWsrep, err) {
-			target.failure(node)
+		if shouldFailure(w, target.isWsrep, err) {
+			target.failure(w)
 			continue
 		}
 
@@ -1080,42 +665,33 @@ func (dbs *DBs) NamedExecContextOnSlave(ctx context.Context, query string, arg i
 	return _namedExec(ctx, dbs.slaves, query, arg)
 }
 
-func _query(ctx context.Context, target *dbBalancer, query string, args ...interface{}) (dbr *sqlxWrapper, res *sql.Rows, err error) {
-	if target == nil {
-		return nil, nil, ErrNoConnection
-	}
-
+func _query(ctx context.Context, target *balancer, query string, args ...interface{}) (dbr *wrapper, res *sql.Rows, err error) {
 	var (
-		node *dbLinkListNode
-		r    interface{}
+		w *wrapper
+		r interface{}
 	)
 
 	for {
-		if node, err = getDBFromBalancer(target); err != nil {
-			reportQueryError("", query, err)
+		if w, err = getDBFromBalancer(target); err != nil {
+			reportError(query, err)
 			return
 		}
 
-		if node.db == nil {
-			target.failure(node)
-			continue
-		}
-
 		// executing
-		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
-			return node.db.db.QueryContext(ctx, query, args...)
+		r, err = retryBackoff(query, func() (interface{}, error) {
+			return w.db.QueryContext(ctx, query, args...)
 		})
 		if r != nil {
 			res = r.(*sql.Rows)
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(node.db, target.isWsrep, err) {
-			target.failure(node)
+		if shouldFailure(w, target.isWsrep, err) {
+			target.failure(w)
 			continue
 		}
 
-		dbr = node.db
+		dbr = w
 		return
 	}
 }
@@ -1148,42 +724,33 @@ func (dbs *DBs) QueryContextOnMaster(ctx context.Context, query string, args ...
 	return
 }
 
-func _queryx(ctx context.Context, target *dbBalancer, query string, args ...interface{}) (dbr *sqlxWrapper, res *sqlx.Rows, err error) {
-	if target == nil {
-		return nil, nil, ErrNoConnection
-	}
-
+func _queryx(ctx context.Context, target *balancer, query string, args ...interface{}) (dbr *wrapper, res *sqlx.Rows, err error) {
 	var (
-		node *dbLinkListNode
-		r    interface{}
+		w *wrapper
+		r interface{}
 	)
 
 	for {
-		if node, err = getDBFromBalancer(target); err != nil {
-			reportQueryError("", query, err)
+		if w, err = getDBFromBalancer(target); err != nil {
+			reportError(query, err)
 			return
 		}
 
-		if node.db == nil {
-			target.failure(node)
-			continue
-		}
-
 		// executing
-		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
-			return node.db.db.QueryxContext(ctx, query, args...)
+		r, err = retryBackoff(query, func() (interface{}, error) {
+			return w.db.QueryxContext(ctx, query, args...)
 		})
 		if r != nil {
 			res = r.(*sqlx.Rows)
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(node.db, target.isWsrep, err) {
-			target.failure(node)
+		if shouldFailure(w, target.isWsrep, err) {
+			target.failure(w)
 			continue
 		}
 
-		dbr = node.db
+		dbr = w
 		return
 	}
 }
@@ -1216,25 +783,16 @@ func (dbs *DBs) QueryxContextOnMaster(ctx context.Context, query string, args ..
 	return
 }
 
-func _queryRow(ctx context.Context, target *dbBalancer, query string, args ...interface{}) (dbr *sqlxWrapper, res *sql.Row, err error) {
-	if target == nil {
-		return nil, nil, ErrNoConnection
-	}
-
-	var node *dbLinkListNode
+func _queryRow(ctx context.Context, target *balancer, query string, args ...interface{}) (dbr *wrapper, res *sql.Row, err error) {
+	var w *wrapper
 
 	for {
-		if node, err = getDBFromBalancer(target); err != nil {
-			reportQueryError("", query, err)
+		if w, err = getDBFromBalancer(target); err != nil {
+			reportError(query, err)
 			return
 		}
 
-		if node.db == nil {
-			target.failure(node)
-			continue
-		}
-
-		res, dbr = node.db.db.QueryRowContext(ctx, query, args...), node.db
+		res, dbr = w.db.QueryRowContext(ctx, query, args...), w
 		return
 	}
 }
@@ -1271,24 +829,16 @@ func (dbs *DBs) QueryRowContextOnMaster(ctx context.Context, query string, args 
 	return
 }
 
-func _queryRowx(ctx context.Context, target *dbBalancer, query string, args ...interface{}) (dbr *sqlxWrapper, res *sqlx.Row, err error) {
-	if target == nil {
-		return nil, nil, ErrNoConnection
-	}
+func _queryRowx(ctx context.Context, target *balancer, query string, args ...interface{}) (dbr *wrapper, res *sqlx.Row, err error) {
+	var w *wrapper
 
-	var node *dbLinkListNode
 	for {
-		if node, err = getDBFromBalancer(target); err != nil {
-			reportQueryError("", query, err)
+		if w, err = getDBFromBalancer(target); err != nil {
+			reportError(query, err)
 			return
 		}
 
-		if node.db == nil {
-			target.failure(node)
-			continue
-		}
-
-		res, dbr = node.db.db.QueryRowxContext(ctx, query, args...), node.db
+		res, dbr = w.db.QueryRowxContext(ctx, query, args...), w
 		return
 	}
 }
@@ -1326,35 +876,27 @@ func (dbs *DBs) QueryRowxContextOnMaster(ctx context.Context, query string, args
 	return
 }
 
-func _select(ctx context.Context, target *dbBalancer, dest interface{}, query string, args ...interface{}) (dbr *sqlxWrapper, err error) {
-	if target == nil {
-		return nil, ErrNoConnection
-	}
+func _select(ctx context.Context, target *balancer, dest interface{}, query string, args ...interface{}) (dbr *wrapper, err error) {
+	var w *wrapper
 
-	var node *dbLinkListNode
 	for {
-		if node, err = getDBFromBalancer(target); err != nil {
-			reportQueryError("", query, err)
+		if w, err = getDBFromBalancer(target); err != nil {
+			reportError(query, err)
 			return
 		}
 
-		if node.db == nil {
-			target.failure(node)
-			continue
-		}
-
 		// executing
-		_, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
-			return nil, node.db.db.SelectContext(ctx, dest, query, args...)
+		_, err = retryBackoff(query, func() (interface{}, error) {
+			return nil, w.db.SelectContext(ctx, dest, query, args...)
 		})
 
 		// check networking/wsrep error
-		if shouldFailure(node.db, target.isWsrep, err) {
-			target.failure(node)
+		if shouldFailure(w, target.isWsrep, err) {
+			target.failure(w)
 			continue
 		}
 
-		dbr = node.db
+		dbr = w
 		return
 	}
 }
@@ -1387,38 +929,27 @@ func (dbs *DBs) SelectContextOnMaster(ctx context.Context, dest interface{}, que
 	return
 }
 
-func _get(ctx context.Context, target *dbBalancer, dest interface{}, query string, args ...interface{}) (dbr *sqlxWrapper, err error) {
-	if target == nil {
-		return nil, ErrNoConnection
-	}
-
-	var (
-		node *dbLinkListNode
-	)
+func _get(ctx context.Context, target *balancer, dest interface{}, query string, args ...interface{}) (dbr *wrapper, err error) {
+	var w *wrapper
 
 	for {
-		if node, err = getDBFromBalancer(target); err != nil {
-			reportQueryError("", query, err)
+		if w, err = getDBFromBalancer(target); err != nil {
+			reportError(query, err)
 			return
 		}
 
-		if node.db == nil {
-			target.failure(node)
-			continue
-		}
-
 		// executing
-		_, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
-			return nil, node.db.db.GetContext(ctx, dest, query, args...)
+		_, err = retryBackoff(query, func() (interface{}, error) {
+			return nil, w.db.GetContext(ctx, dest, query, args...)
 		})
 
 		// check networking/wsrep error
-		if shouldFailure(node.db, target.isWsrep, err) {
-			target.failure(node)
+		if shouldFailure(w, target.isWsrep, err) {
+			target.failure(w)
 			continue
 		}
 
-		dbr = node.db
+		dbr = w
 		return
 	}
 }
@@ -1455,38 +986,29 @@ func (dbs *DBs) GetContextOnMaster(ctx context.Context, dest interface{}, query 
 	return
 }
 
-func _exec(ctx context.Context, target *dbBalancer, query string, args ...interface{}) (res sql.Result, err error) {
-	if target == nil {
-		return nil, ErrNoConnection
-	}
-
+func _exec(ctx context.Context, target *balancer, query string, args ...interface{}) (res sql.Result, err error) {
 	var (
-		node *dbLinkListNode
-		r    interface{}
+		w *wrapper
+		r interface{}
 	)
 
 	for {
-		if node, err = getDBFromBalancer(target); err != nil {
-			reportQueryError("", query, err)
+		if w, err = getDBFromBalancer(target); err != nil {
+			reportError(query, err)
 			return
 		}
 
-		if node.db == nil {
-			target.failure(node)
-			continue
-		}
-
 		// executing
-		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
-			return node.db.db.ExecContext(ctx, query, args...)
+		r, err = retryBackoff(query, func() (interface{}, error) {
+			return w.db.ExecContext(ctx, query, args...)
 		})
 		if r != nil {
 			res = r.(sql.Result)
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(node.db, target.isWsrep, err) {
-			target.failure(node)
+		if shouldFailure(w, target.isWsrep, err) {
+			target.failure(w)
 			continue
 		}
 
@@ -1514,42 +1036,33 @@ func (dbs *DBs) ExecContextOnSlave(ctx context.Context, query string, args ...in
 	return _exec(ctx, dbs.slaves, query, args...)
 }
 
-func _prepareContext(ctx context.Context, target *dbBalancer, query string) (dbx *sqlx.DB, stmt *sql.Stmt, err error) {
-	if target == nil {
-		return nil, nil, ErrNoConnection
-	}
-
+func _prepareContext(ctx context.Context, target *balancer, query string) (dbx *sqlx.DB, stmt *sql.Stmt, err error) {
 	var (
-		node *dbLinkListNode
-		r    interface{}
+		w *wrapper
+		r interface{}
 	)
 
 	for {
-		if node, err = getDBFromBalancer(target); err != nil {
-			reportQueryError("", query, err)
+		if w, err = getDBFromBalancer(target); err != nil {
+			reportError(query, err)
 			return
 		}
 
-		if node.db == nil {
-			target.failure(node)
-			continue
-		}
-
 		// executing
-		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
-			return node.db.db.PrepareContext(ctx, query)
+		r, err = retryBackoff(query, func() (interface{}, error) {
+			return w.db.PrepareContext(ctx, query)
 		})
 		if r != nil {
 			stmt = r.(*sql.Stmt)
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(node.db, target.isWsrep, err) {
-			target.failure(node)
+		if shouldFailure(w, target.isWsrep, err) {
+			target.failure(w)
 			continue
 		}
 
-		dbx = node.db.db
+		dbx = w.db
 		return
 	}
 }
@@ -1590,42 +1103,33 @@ func (dbs *DBs) PrepareContextOnSlave(ctx context.Context, query string) (db *sq
 	return _prepareContext(ctx, dbs.slaves, query)
 }
 
-func _preparexContext(ctx context.Context, target *dbBalancer, query string) (dbx *sqlx.DB, stmt *sqlx.Stmt, err error) {
-	if target == nil {
-		return nil, nil, ErrNoConnection
-	}
-
+func _preparexContext(ctx context.Context, target *balancer, query string) (dbx *sqlx.DB, stmt *sqlx.Stmt, err error) {
 	var (
-		node *dbLinkListNode
-		r    interface{}
+		w *wrapper
+		r interface{}
 	)
 
 	for {
-		if node, err = getDBFromBalancer(target); err != nil {
-			reportQueryError("", query, err)
+		if w, err = getDBFromBalancer(target); err != nil {
+			reportError(query, err)
 			return
 		}
 
-		if node.db == nil {
-			target.failure(node)
-			continue
-		}
-
 		// executing
-		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
-			return node.db.db.PreparexContext(ctx, query)
+		r, err = retryBackoff(query, func() (interface{}, error) {
+			return w.db.PreparexContext(ctx, query)
 		})
 		if r != nil {
 			stmt = r.(*sqlx.Stmt)
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(node.db, target.isWsrep, err) {
-			target.failure(node)
+		if shouldFailure(w, target.isWsrep, err) {
+			target.failure(w)
 			continue
 		}
 
-		dbx = node.db.db
+		dbx = w.db
 		return
 	}
 }
@@ -1670,42 +1174,33 @@ func (dbs *DBs) PreparexContextOnSlave(ctx context.Context, query string) (db *s
 	return _preparexContext(ctx, dbs.slaves, query)
 }
 
-func _prepareNamedContext(ctx context.Context, target *dbBalancer, query string) (dbx *sqlx.DB, stmt *sqlx.NamedStmt, err error) {
-	if target == nil {
-		return nil, nil, ErrNoConnection
-	}
-
+func _prepareNamedContext(ctx context.Context, target *balancer, query string) (dbx *sqlx.DB, stmt *sqlx.NamedStmt, err error) {
 	var (
-		node *dbLinkListNode
-		r    interface{}
+		w *wrapper
+		r interface{}
 	)
 
 	for {
-		if node, err = getDBFromBalancer(target); err != nil {
-			reportQueryError("", query, err)
+		if w, err = getDBFromBalancer(target); err != nil {
+			reportError(query, err)
 			return
 		}
 
-		if node.db == nil {
-			target.failure(node)
-			continue
-		}
-
 		// executing
-		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
-			return node.db.db.PrepareNamedContext(ctx, query)
+		r, err = retryBackoff(query, func() (interface{}, error) {
+			return w.db.PrepareNamedContext(ctx, query)
 		})
 		if r != nil {
 			stmt = r.(*sqlx.NamedStmt)
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(node.db, target.isWsrep, err) {
-			target.failure(node)
+		if shouldFailure(w, target.isWsrep, err) {
+			target.failure(w)
 			continue
 		}
 
-		dbx = node.db.db
+		dbx = w.db
 		return
 	}
 }
@@ -1730,37 +1225,28 @@ func (dbs *DBs) PrepareNamedContextOnSlave(ctx context.Context, query string) (d
 	return _prepareNamedContext(ctx, dbs.slaves, query)
 }
 
-func _mustExec(ctx context.Context, target *dbBalancer, query string, args ...interface{}) (res sql.Result) {
-	if target == nil {
-		panic(ErrNoConnection)
-	}
-
+func _mustExec(ctx context.Context, target *balancer, query string, args ...interface{}) (res sql.Result) {
 	var (
-		node *dbLinkListNode
-		err  error
-		r    interface{}
+		w   *wrapper
+		err error
+		r   interface{}
 	)
 
 	for {
-		if node, err = getDBFromBalancer(target); err != nil {
+		if w, err = getDBFromBalancer(target); err != nil {
 			panic(err)
 		}
 
-		if node.db == nil {
-			target.failure(node)
-			continue
-		}
-
-		r, err = retryBackoff(node.db.dsn, query, func() (interface{}, error) {
-			return node.db.db.ExecContext(ctx, query, args...)
+		r, err = retryBackoff(query, func() (interface{}, error) {
+			return w.db.ExecContext(ctx, query, args...)
 		})
 		if r != nil {
 			res = r.(sql.Result)
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(node.db, target.isWsrep, err) {
-			target.failure(node)
+		if shouldFailure(w, target.isWsrep, err) {
+			target.failure(w)
 			continue
 		}
 
@@ -1851,33 +1337,27 @@ func (dbs *DBs) Begin() (*sql.Tx, error) {
 // Transaction is bound to one of master connections.
 func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (res *sql.Tx, err error) {
 	var (
-		node *dbLinkListNode
-		r    interface{}
+		w *wrapper
+		r interface{}
 	)
 
 	for {
-		node, err = getDBFromBalancer(dbs.masters)
-		if err != nil {
-			reportQueryError("", "BeginTx", err)
+		if w, err = getDBFromBalancer(dbs.masters); err != nil {
+			reportError("BeginTx", err)
 			return nil, err
 		}
 
-		if node.db == nil {
-			dbs.masters.failure(node)
-			continue
-		}
-
 		// executing
-		r, err = retryBackoff(node.db.dsn, "START TRANSACTION", func() (interface{}, error) {
-			return node.db.db.BeginTx(ctx, opts)
+		r, err = retryBackoff("START TRANSACTION", func() (interface{}, error) {
+			return w.db.BeginTx(ctx, opts)
 		})
 		if r != nil {
 			res = r.(*sql.Tx)
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(node.db, dbs.masters.isWsrep, err) {
-			dbs.masters.failure(node)
+		if shouldFailure(w, dbs.masters.isWsrep, err) {
+			dbs.masters.failure(w)
 			continue
 		}
 
@@ -1890,33 +1370,27 @@ func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (res *sql.Tx, 
 // Transaction is bound to one of master connections.
 func (dbs *DBs) Beginx() (res *sqlx.Tx, err error) {
 	var (
-		node *dbLinkListNode
-		r    interface{}
+		w *wrapper
+		r interface{}
 	)
 
 	for {
-		node, err = getDBFromBalancer(dbs.masters)
-		if err != nil {
-			reportQueryError("", "Beginx", err)
+		if w, err = getDBFromBalancer(dbs.masters); err != nil {
+			reportError("Beginx", err)
 			return nil, err
 		}
 
-		if node.db == nil {
-			dbs.masters.failure(node)
-			continue
-		}
-
 		// executing
-		r, err = retryBackoff(node.db.dsn, "START TRANSACTION", func() (interface{}, error) {
-			return node.db.db.Beginx()
+		r, err = retryBackoff("START TRANSACTION", func() (interface{}, error) {
+			return w.db.Beginx()
 		})
 		if r != nil {
 			res = r.(*sqlx.Tx)
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(node.db, dbs.masters.isWsrep, err) {
-			dbs.masters.failure(node)
+		if shouldFailure(w, dbs.masters.isWsrep, err) {
+			dbs.masters.failure(w)
 			continue
 		}
 
@@ -1935,33 +1409,27 @@ func (dbs *DBs) Beginx() (res *sqlx.Tx, err error) {
 // Transaction is bound to one of master connections.
 func (dbs *DBs) BeginTxx(ctx context.Context, opts *sql.TxOptions) (res *sqlx.Tx, err error) {
 	var (
-		node *dbLinkListNode
-		r    interface{}
+		w *wrapper
+		r interface{}
 	)
 
 	for {
-		node, err = getDBFromBalancer(dbs.masters)
-		if err != nil {
-			reportQueryError("", "BeginTxx", err)
+		if w, err = getDBFromBalancer(dbs.masters); err != nil {
+			reportError("BeginTxx", err)
 			return nil, err
 		}
 
-		if node.db == nil {
-			dbs.masters.failure(node)
-			continue
-		}
-
 		// executing
-		r, err = retryBackoff(node.db.dsn, "START TRANSACTION", func() (interface{}, error) {
-			return node.db.db.BeginTxx(ctx, opts)
+		r, err = retryBackoff("START TRANSACTION", func() (interface{}, error) {
+			return w.db.BeginTxx(ctx, opts)
 		})
 		if r != nil {
 			res = r.(*sqlx.Tx)
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(node.db, dbs.masters.isWsrep, err) {
-			dbs.masters.failure(node)
+		if shouldFailure(w, dbs.masters.isWsrep, err) {
+			dbs.masters.failure(w)
 			continue
 		}
 
@@ -1984,20 +1452,6 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 		masterDSNs = []string{}
 	}
 
-	nMaster := len(masterDSNs)
-	nSlave := len(slaveDSNs)
-
-	errResult := make([]error, nMaster+nSlave)
-	dbs := &DBs{
-		driverName: driverName,
-		masters:    &dbBalancer{},
-		_masters:   make([]*sqlxWrapper, nMaster),
-		slaves:     &dbBalancer{},
-		_slaves:    make([]*sqlxWrapper, nSlave),
-		all:        &dbBalancer{},
-		_all:       make([]*sqlxWrapper, nMaster+nSlave),
-	}
-
 	isWsrep := false
 	if len(args) > 0 {
 		switch args[0].(type) {
@@ -2006,14 +1460,23 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 		}
 	}
 
-	dbs.masters.init(nMaster<<2/10, nMaster, isWsrep) // 40%
-	dbs.masters._name = "masters"
+	nMaster := len(masterDSNs)
+	nSlave := len(slaveDSNs)
+	nAll := nMaster + nSlave
 
-	dbs.slaves.init(nSlave<<2/10, nSlave, isWsrep) // 40%
-	dbs.slaves._name = "slaves"
+	errResult := make([]error, nAll)
+	dbs := &DBs{
+		driverName: driverName,
 
-	dbs.all.init((nMaster+nSlave)<<2/10, nMaster+nSlave, isWsrep) // 40%
-	dbs.all._name = "all"
+		masters:  newBalancer(nil, nMaster>>2, nMaster, isWsrep),
+		_masters: make([]*wrapper, nMaster),
+
+		slaves:  newBalancer(nil, nSlave>>2, nSlave, isWsrep),
+		_slaves: make([]*wrapper, nSlave),
+
+		all:  newBalancer(nil, nAll>>2, nAll, isWsrep),
+		_all: make([]*wrapper, nAll),
+	}
 
 	// channel to sync routines
 	c := make(chan byte, len(errResult))
@@ -2023,7 +1486,7 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 	for i := range masterDSNs {
 		go func(mId, eId int) {
 			dbConn, err := sqlx.Connect(driverName, masterDSNs[mId])
-			dbs._masters[mId], errResult[eId] = &sqlxWrapper{db: dbConn, dsn: masterDSNs[mId]}, err
+			dbs._masters[mId], errResult[eId] = &wrapper{db: dbConn, dsn: masterDSNs[mId]}, err
 			dbs.masters.add(dbs._masters[mId])
 
 			dbs._all[eId] = dbs._masters[mId]
@@ -2038,7 +1501,7 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 	for i := range slaveDSNs {
 		go func(sId, eId int) {
 			dbConn, err := sqlx.Connect(driverName, slaveDSNs[sId])
-			dbs._slaves[sId], errResult[eId] = &sqlxWrapper{db: dbConn, dsn: slaveDSNs[sId]}, err
+			dbs._slaves[sId], errResult[eId] = &wrapper{db: dbConn, dsn: slaveDSNs[sId]}, err
 			dbs.slaves.add(dbs._slaves[sId])
 
 			dbs._all[eId] = dbs._slaves[sId]

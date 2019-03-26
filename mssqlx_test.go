@@ -70,6 +70,7 @@ func ConnectMasterSlave() {
 		pgDBs, _ = ConnectMasterSlaves("postgres", masterDSNs, slaveDSNs)
 		pgDBs.SetMaxIdleConns(5)
 		pgDBs.SetMaxOpenConns(10)
+		pgDBs.SetConnMaxLifetime(3 * time.Millisecond)
 	}
 
 	if TestWMysql {
@@ -78,6 +79,7 @@ func ConnectMasterSlave() {
 		myDBs, _ = ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs)
 		myDBs.SetMaxIdleConns(5)
 		myDBs.SetMaxOpenConns(10)
+		myDBs.SetConnMaxLifetime(3 * time.Millisecond)
 	}
 
 	if TestWSqlite {
@@ -86,6 +88,7 @@ func ConnectMasterSlave() {
 		sqDBs, _ = ConnectMasterSlaves("sqlite3", masterDSNs, slaveDSNs)
 		sqDBs.SetMaxIdleConns(5)
 		sqDBs.SetMaxOpenConns(10)
+		pgDBs.SetConnMaxLifetime(3 * time.Millisecond)
 	}
 }
 
@@ -278,150 +281,23 @@ func TestParseError(t *testing.T) {
 	db, _ := sqlx.Open("postgres", "user=test1 dbname=test2 sslmode=disable")
 
 	errT = fmt.Errorf("abc")
-	if err = parseError(&sqlxWrapper{db: db, dsn: "user=test1 dbname=test2 sslmode=disable"}, errT); err != ErrNetwork {
+	if err = parseError(&wrapper{db: db, dsn: "user=test1 dbname=test2 sslmode=disable"}, errT); err != ErrNetwork {
 		t.Fatal(err)
 	}
 }
 
-func TestDbLinkListNode(t *testing.T) {
-	dsn1 := "user=test1 dbname=test1 sslmode=disable"
-	db1, _ := sqlx.Open("postgres", dsn1)
-	llNode1 := &dbLinkListNode{db: &sqlxWrapper{db: db1, dsn: dsn1}}
-	if llNode1.GetDB().db != db1 {
-		t.Fatal("dbLinkListNode is not set properly")
-	}
-
-	dsn2 := "user=test1 dbname=test1 sslmode=disable"
-	db2, _ := sqlx.Open("postgres", dsn2)
-	llNode2 := &dbLinkListNode{db: &sqlxWrapper{db: db2, dsn: dsn2}}
-
-	dsn3 := "user=test1 dbname=test1 sslmode=disable"
-	db3, _ := sqlx.Open("postgres", dsn3)
-	llNode3 := &dbLinkListNode{db: &sqlxWrapper{db: db3, dsn: dsn3}}
-
-	dsn4 := "user=test1 dbname=test1 sslmode=disable"
-	db4, _ := sqlx.Open("postgres", dsn4)
-	llNode4 := &dbLinkListNode{db: &sqlxWrapper{db: db4, dsn: dsn4}}
-
-	ll := dbLinkList{}
-
-	if ll.next() != nil || ll.prev() != nil {
-		t.Fatal("dbLinkList is not set properly: next function fail")
-	}
-
-	// test add
-	ll.add(llNode1)
-	ll.add(llNode2)
-	ll.add(nil)
-	ll.add(&dbLinkListNode{})
-	if ll.current != llNode1 || ll.size != 2 || ll.getCurrentNode() != llNode1 {
-		t.Fatal("dbLinkList is not set properly")
-	}
-
-	if ll.next() != llNode2 || ll.prev() != llNode2 {
-		t.Fatal("dbLinkList is not set properly: next/prev function fail")
-	}
-
-	ll.add(llNode3)
-	if ll.next() != llNode2 || ll.prev() != llNode3 {
-		t.Fatal("dbLinkList is not set properly: next/prev function fail")
-	}
-
-	// test move next
-	if ll.moveNext() != llNode1 {
-		t.Fatal("dbLinkList is not set properly: moveNext function fail")
-	}
-	if ll.current != llNode2 || ll.getCurrentNode() != llNode2 {
-		t.Fatal("dbLinkList is not set properly: moveNext function fail")
-	}
-
-	// test move prev
-	if ll.moveNext() != llNode2 {
-		t.Fatal("dbLinkList is not set properly: moveNext function fail")
-	}
-
-	if ll.movePrev() != llNode3 {
-		t.Fatal("dbLinkList is not set properly: movePrev function fail")
-	}
-
-	if ll.getCurrentNode() != llNode2 {
-		t.Fatal("dbLinkList is not set properly: movePrev function fail")
-	}
-
-	// now try to remove
-	ll.add(llNode4)
-
-	if ll.remove(llNode2) {
-		if ll.getCurrentNode() != llNode3 {
-			t.Fatal("dbLinkList is not set properly: remove function fail")
-		}
-	} else {
-		t.Fatal("dbLinkList is not set properly: remove function fail")
-	}
-
-	if ll.remove(nil) {
-		t.Fatal("dbLinkList is not set properly: remove function fail")
-	}
-
-	if ll.remove(llNode1) {
-		if ll.getCurrentNode() != llNode3 {
-			t.Fatal("dbLinkList is not set properly: remove function fail")
-		}
-	} else {
-		t.Fatal("dbLinkList is not set properly: remove function fail")
-	}
-
-	if ll.remove(llNode3) {
-		if ll.getCurrentNode() != llNode4 || ll.head != llNode4 || ll.tail != llNode4 {
-			t.Fatal("dbLinkList is not set properly: remove function fail")
-		}
-	} else {
-		t.Fatal("dbLinkList is not set properly: remove function fail")
-	}
-
-	ll.add(llNode3)
-	if ll.remove(llNode3) {
-		if ll.getCurrentNode() != llNode4 || ll.head != llNode4 || ll.tail != llNode4 {
-			t.Fatal("dbLinkList is not set properly: remove function fail")
-		}
-	} else {
-		t.Fatal("dbLinkList is not set properly: remove function fail")
-	}
-
-	if ll.remove(llNode4) {
-		if ll.current != nil || ll.head != nil || ll.tail != nil {
-			t.Fatal("dbLinkList is not set properly: remove function fail")
-		}
-	} else {
-		t.Fatal("dbLinkList is not set properly: remove function fail")
-	}
-
-	ll.add(llNode1)
-	ll.clear()
-	if ll.current != nil || ll.head != nil || ll.tail != nil {
-		t.Fatal("dbLinkList is not set properly: remove function fail")
-	}
-}
-
 func TestDbBalancer(t *testing.T) {
-	dbB := dbBalancer{}
+	dbB := newBalancer(nil, 0, 4, true)
 
-	dbB.init(-1, 12, true)
 	if dbB.numberOfHealthChecker != 2 {
 		t.Fatal("DbBalancer init fail")
 	}
 
-	dbB.init(0, 12, true)
-	if dbB.numberOfHealthChecker != 2 {
-		t.Fatal("DbBalancer: init fail")
+	if dbB.setHealthCheckPeriod(0); dbB.getHealthCheckPeriod() != DefaultHealthCheckPeriodInMilli {
+		t.Fatal("DbBalancer: setHealthCheckPeriod fail")
 	}
 
-	dbB.init(4, 12, true)
-	if dbB.numberOfHealthChecker != 4 {
-		t.Fatal("DbBalancer: init fail")
-	}
-
-	if dbB.setHealthCheckPeriod(200); dbB.healthCheckPeriod != 200 {
+	if dbB.setHealthCheckPeriod(200); dbB.getHealthCheckPeriod() != 200 {
 		t.Fatal("DbBalancer: setHealthCheckPeriod fail")
 	}
 
@@ -432,39 +308,43 @@ func TestDbBalancer(t *testing.T) {
 	db4, _ := sqlx.Open("postgres", dsn)
 
 	dbB.add(nil)
-	dbB.add(&sqlxWrapper{db: db1, dsn: dsn})
-	dbB.add(&sqlxWrapper{db: db2, dsn: dsn})
-	dbB.add(&sqlxWrapper{db: db3, dsn: dsn})
-	dbB.add(&sqlxWrapper{db: db4, dsn: dsn})
+	dbB.add(&wrapper{db: db1, dsn: dsn})
+	dbB.add(&wrapper{db: db2, dsn: dsn})
+	dbB.add(&wrapper{db: db3, dsn: dsn})
+	dbB.add(&wrapper{db: db4, dsn: dsn})
 
-	if dbB.dbs.size != 4 {
+	if dbB.size() != 4 {
 		t.Fatal("DbBalancer: add fail")
 	}
 
-	if x := dbB.get(true); x.db.db != db1 {
+	if x := dbB.get(true); x.db != db2 {
 		t.Fatal("DbBalancer: get fail")
 	}
 
-	if x := dbB.get(false); x.db.db != db2 {
+	if x := dbB.get(false); x.db != db2 {
 		t.Fatal("DbBalancer: get fail")
 	}
 
-	if x := dbB.get(true); x.db.db != db2 {
+	if x := dbB.get(true); x.db != db3 {
 		t.Fatal("DbBalancer: get fail")
 	}
 
-	if x := dbB.get(false); x.db.db != db3 {
+	if x := dbB.get(false); x.db != db3 {
 		t.Fatal("DbBalancer: get fail")
 	} else {
 		dbB.failure(x)
+		if dbB.size() != 3 || (&wrapper{db: db3, dsn: dsn}).checkWsrepReady() {
+			t.Fatal("DbBalancer: failure fail")
+		}
 
-		if dbB.dbs.size != 3 || dbB.checkWsrepReady(&sqlxWrapper{db: db3, dsn: dsn}) {
+		dbB.failure(nil)
+		if dbB.size() != 3 || (&wrapper{db: db3, dsn: dsn}).checkWsrepReady() {
 			t.Fatal("DbBalancer: failure fail")
 		}
 	}
 
 	dbB.destroy()
-	if dbB.dbs.size != 0 {
+	if dbB.size() != 0 {
 		t.Fatal("DbBalancer: destroy fail")
 	}
 }
@@ -581,7 +461,7 @@ func TestConnectMasterSlave(t *testing.T) {
 func TestGlobalFunc(t *testing.T) {
 	// test set mapper func
 	_mapperFunc(nil, nil)
-	_mapperFunc([]*sqlxWrapper{}, nil)
+	_mapperFunc([]*wrapper{}, nil)
 	dbs := DBs{}
 	dbs.MapperFunc(nil)
 	dbs.MapperFuncMaster(nil)
@@ -595,7 +475,7 @@ func TestGlobalFunc(t *testing.T) {
 	if rb := dbs.Rebind("SELECT * FROM test"); rb != "" {
 		t.Fatal("Test rebind fail", rb)
 	}
-	dbs._all = []*sqlxWrapper{nil}
+	dbs._all = []*wrapper{nil}
 	if rb := dbs.Rebind("SELECT * FROM test"); rb != "" {
 		t.Fatal("Test rebind fail", rb)
 	}
@@ -605,37 +485,26 @@ func TestGlobalFunc(t *testing.T) {
 	if _, _, e := dbs.BindNamed("DELETE FROM person WHERE first_name=:first_name", "John"); e != ErrNoConnection {
 		t.Fatal("Test BindNamed failed")
 	}
-	dbs._all = []*sqlxWrapper{}
+	dbs._all = []*wrapper{}
 	if _, _, e := dbs.BindNamed("DELETE FROM person WHERE first_name=:first_name", "John"); e != ErrNoConnection {
 		t.Fatal("Test BindNamed failed")
 	}
-	dbs._all = []*sqlxWrapper{nil}
+	dbs._all = []*wrapper{nil}
 	if _, _, e := dbs.BindNamed("DELETE FROM person WHERE first_name=:first_name", "John"); e != ErrNoConnection {
 		t.Fatal("Test BindNamed failed")
 	}
 
 	dsn := "user=test1 dbname=test2 sslmode=disable"
 	_db1, _ := sqlx.Open("postgres", dsn)
-	db1 := &sqlxWrapper{db: _db1, dsn: dsn}
+	db1 := &wrapper{db: _db1, dsn: dsn}
 	_db2, _ := sqlx.Open("postgres", dsn)
-	db2 := &sqlxWrapper{db: _db2, dsn: dsn}
+	db2 := &wrapper{db: _db2, dsn: dsn}
 	_db3, _ := sqlx.Open("postgres", dsn)
-	db3 := &sqlxWrapper{db: _db3, dsn: dsn}
+	db3 := &wrapper{db: _db3, dsn: dsn}
 	_db4, _ := sqlx.Open("postgres", dsn)
-	db4 := &sqlxWrapper{db: _db4, dsn: dsn}
+	db4 := &wrapper{db: _db4, dsn: dsn}
 
-	dbB := &dbBalancer{}
-	dbB.init(-1, 4, true)
-	dbB.add(db1)
-	dbB.add(db2)
-	dbB.add(db3)
-	dbB.add(db4)
-	if _, err := _exec(context.Background(), nil, "SELECT 1"); err != ErrNoConnection {
-		t.Fatal("_exec fail")
-	}
-
-	dbB = &dbBalancer{}
-	dbB.init(-1, 2, true)
+	dbB := newBalancer(nil, -1, 2, true)
 	dbB.add(db1)
 	dbB.add(db2)
 	if _, _, err := _query(context.Background(), dbB, "SELECT 1"); err != ErrNoConnectionOrWsrep {
@@ -643,8 +512,7 @@ func TestGlobalFunc(t *testing.T) {
 	}
 	dbB.destroy()
 
-	dbB = &dbBalancer{}
-	dbB.init(-1, 2, true)
+	dbB = newBalancer(nil, -1, 2, true)
 	dbB.add(db1)
 	dbB.add(db2)
 	tmp := 1
@@ -654,50 +522,50 @@ func TestGlobalFunc(t *testing.T) {
 	dbB.destroy()
 
 	// check mapper func to see panic occurring
-	_mapperFunc([]*sqlxWrapper{db1, db2}, nil)
+	_mapperFunc([]*wrapper{db1, db2}, nil)
 
 	// check ping
 	if errs := _ping(nil); errs != nil {
 		t.Fatal("Ping fail")
 	}
-	if errs := _ping([]*sqlxWrapper{}); errs != nil {
+	if errs := _ping([]*wrapper{}); errs != nil {
 		t.Fatal("Ping fail")
 	}
 
 	// check close
-	if errs := _close([]*sqlxWrapper{db1, db2}); errs == nil || len(errs) != 2 {
+	if errs := _close([]*wrapper{db1, db2}); errs == nil || len(errs) != 2 {
 		t.Fatal("_close fail")
 	}
 	if errs := _close(nil); errs != nil {
 		t.Fatal("_close fail")
 	}
-	if errs := _close([]*sqlxWrapper{}); errs != nil {
+	if errs := _close([]*wrapper{}); errs != nil {
 		t.Fatal("_close fail")
 	}
 
 	// check set max idle conns
-	_setMaxIdleConns([]*sqlxWrapper{}, 12)
+	_setMaxIdleConns([]*wrapper{}, 12)
 	_setMaxIdleConns(nil, 12)
-	_setMaxIdleConns([]*sqlxWrapper{db3, db4}, 12)
+	_setMaxIdleConns([]*wrapper{db3, db4}, 12)
 
 	// check set max conns
-	_setMaxOpenConns([]*sqlxWrapper{}, 16)
+	_setMaxOpenConns([]*wrapper{}, 16)
 	_setMaxOpenConns(nil, 16)
-	_setMaxOpenConns([]*sqlxWrapper{db3, db4}, 16)
+	_setMaxOpenConns([]*wrapper{db3, db4}, 16)
 
 	// check setConnMaxLifetime
-	_setConnMaxLifetime([]*sqlxWrapper{}, 16*time.Second)
+	_setConnMaxLifetime([]*wrapper{}, 16*time.Second)
 	_setConnMaxLifetime(nil, 16*time.Second)
-	_setConnMaxLifetime([]*sqlxWrapper{db3, db4}, 16*time.Second)
+	_setConnMaxLifetime([]*wrapper{db3, db4}, 16*time.Second)
 
 	// check stats
 	if stats := _stats(nil); stats != nil {
 		t.Fatal("_stats fail")
 	}
-	if stats := _stats([]*sqlxWrapper{}); stats != nil {
+	if stats := _stats([]*wrapper{}); stats != nil {
 		t.Fatal("_stats fail")
 	}
-	if stats := _stats([]*sqlxWrapper{db1, db2, db3, db4}); stats == nil || len(stats) != 4 {
+	if stats := _stats([]*wrapper{db1, db2, db3, db4}); stats == nil || len(stats) != 4 {
 		t.Fatal("_stats fail")
 	}
 }
@@ -1935,7 +1803,7 @@ func TestStressQueries(t *testing.T) {
 	}
 
 	_RunWithSchema(schema, t, func(db *DBs, t *testing.T) {
-		ch := make(chan bool)
+		ch := make(chan struct{}, 100)
 
 		type StressType struct {
 			K string
@@ -1945,18 +1813,25 @@ func TestStressQueries(t *testing.T) {
 		var wg sync.WaitGroup
 		worker := func(wg *sync.WaitGroup) {
 			defer wg.Done()
+
 			for range ch {
 				if _, err := db.Exec(db.Rebind("INSERT INTO stress VALUES (?, ?)"), "a", 12); err != nil {
 					t.Fatal(err)
 				}
 
+				time.Sleep(time.Millisecond)
+
 				if _, err := db.ExecContext(context.Background(), db.Rebind("INSERT INTO stress VALUES (?, ?)"), "a", 12); err != nil {
 					t.Log(err)
 				}
 
+				time.Sleep(time.Millisecond)
+
 				if _, err := db.ExecContextOnSlave(context.Background(), db.Rebind("INSERT INTO stress VALUES (?, ?)"), "a", 12); err != nil {
 					t.Log(err)
 				}
+
+				time.Sleep(time.Millisecond)
 
 				var x []StressType
 				if err := db.Select(&x, "SELECT * FROM stress"); err != nil {
@@ -1998,18 +1873,19 @@ func TestStressQueries(t *testing.T) {
 			}
 		}
 
-		limit := 50
+		limit := 4
 		if db == sqDBs {
-			limit = 5
+			limit = 2
 		}
 
-		for i := 1; i <= limit; i++ {
-			wg.Add(1)
+		wg.Add(limit)
+		for i := 0; i < limit; i++ {
 			go worker(&wg)
 		}
 
-		for i := 0; i < limit*2; i++ {
-			ch <- true
+		// notify workers
+		for i := 0; i < 1000; i++ {
+			ch <- struct{}{}
 		}
 		close(ch)
 
