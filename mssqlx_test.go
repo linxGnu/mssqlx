@@ -68,7 +68,7 @@ func ConnectMasterSlave() {
 		masterDSNs := []string{pgdsn, pgdsn}
 		slaveDSNs := []string{pgdsn, pgdsn}
 		pgDBs, _ = ConnectMasterSlaves("postgres", masterDSNs, slaveDSNs)
-		pgDBs.SetMaxIdleConns(5)
+		pgDBs.SetMaxIdleConns(2)
 		pgDBs.SetMaxOpenConns(10)
 		pgDBs.SetConnMaxLifetime(3 * time.Millisecond)
 	}
@@ -77,7 +77,7 @@ func ConnectMasterSlave() {
 		masterDSNs := []string{mydsn, mydsn}
 		slaveDSNs := []string{mydsn, mydsn}
 		myDBs, _ = ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs)
-		myDBs.SetMaxIdleConns(5)
+		myDBs.SetMaxIdleConns(2)
 		myDBs.SetMaxOpenConns(10)
 		myDBs.SetConnMaxLifetime(3 * time.Millisecond)
 	}
@@ -86,7 +86,7 @@ func ConnectMasterSlave() {
 		masterDSNs := []string{sqdsn, sqdsn}
 		slaveDSNs := []string{sqdsn, sqdsn}
 		sqDBs, _ = ConnectMasterSlaves("sqlite3", masterDSNs, slaveDSNs)
-		sqDBs.SetMaxIdleConns(5)
+		sqDBs.SetMaxIdleConns(2)
 		sqDBs.SetMaxOpenConns(10)
 		pgDBs.SetConnMaxLifetime(3 * time.Millisecond)
 	}
@@ -1873,7 +1873,7 @@ func TestStressQueries(t *testing.T) {
 			}
 		}
 
-		limit := 4
+		limit := 16
 		if db == sqDBs {
 			limit = 2
 		}
