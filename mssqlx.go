@@ -1437,7 +1437,7 @@ func (dbs *DBs) BeginTxx(ctx context.Context, opts *sql.TxOptions) (res *sqlx.Tx
 	}
 }
 
-// ConnectMasterSlaves to master-slave databases and verify with pings.
+// ConnectMasterSlaves to master-slave databases, healthchecks will ensure they are working
 // driverName: mysql, postgres, etc.
 // masterDSNs: data source names of Masters.
 // slaveDSNs: data source names of Slaves.
@@ -1485,7 +1485,7 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 	n := 0
 	for i := range masterDSNs {
 		go func(mId, eId int) {
-			dbConn, err := sqlx.Connect(driverName, masterDSNs[mId])
+			dbConn, err := sqlx.Open(driverName, masterDSNs[mId])
 			dbs._masters[mId], errResult[eId] = &wrapper{db: dbConn, dsn: masterDSNs[mId]}, err
 			dbs.masters.add(dbs._masters[mId])
 
@@ -1500,7 +1500,7 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 	// Concurrency connect to slaves
 	for i := range slaveDSNs {
 		go func(sId, eId int) {
-			dbConn, err := sqlx.Connect(driverName, slaveDSNs[sId])
+			dbConn, err := sqlx.Open(driverName, slaveDSNs[sId])
 			dbs._slaves[sId], errResult[eId] = &wrapper{db: dbConn, dsn: slaveDSNs[sId]}, err
 			dbs.slaves.add(dbs._slaves[sId])
 
