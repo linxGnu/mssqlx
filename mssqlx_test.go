@@ -371,10 +371,17 @@ func TestConnectMasterSlave(t *testing.T) {
 		t.Fatal("Ping fail")
 	}
 
+	// ensure no nil dbs
+	for _, v := range db._all {
+		if v.db == nil {
+			t.Fatal("Nil DB in list")
+		}
+	}
+
 	// test another ping
 	for _, v := range db._all {
-		if v.db != nil && ping(v) != nil {
-			t.Fatal("Ping fail")
+		if e := ping(v); e != nil && e.Error() != "pq: role \"test1\" does not exist" {
+			t.Fatal(e)
 		}
 	}
 
