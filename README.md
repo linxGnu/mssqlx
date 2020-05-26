@@ -52,7 +52,15 @@ db, _ := mssqlx.ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs)
 Recommended to set flag as following: 
 
 ```go
-db, _ := mssqlx.ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs, true)
+db, _ := mssqlx.ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs, mssqlx.WithWsrep())
+```
+
+## Connecting to Databases with custom read-query source
+
+Read-queries will be distributed among both masters and slaves: 
+
+```go
+db, _ := mssqlx.ConnectMasterSlaves("mysql", masterDSNs, slaveDSNs, mssqlx.WithReadQuerySource(mssqlx.ReadQuerySourceAll))
 ```
 
 ## Configuration
