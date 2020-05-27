@@ -1,0 +1,40 @@
+version: '3'
+networks:
+  integration-test:
+    driver: bridge
+services:
+  postgres:
+    image: postgres:9.6
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: test
+    restart: on-failure
+    networks:
+      - integration-test
+  mysql:
+    image: mysql:5.7
+    expose:
+      - "3306"
+    environment:
+      MYSQL_USER: test
+      MYSQL_PASSWORD: test
+      MYSQL_ROOT_PASSWORD: test
+      MYSQL_DATABASE: test
+    restart: on-failure
+    networks:
+      - integration-test
+  mssqlx:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      MSSQLX_POSTGRES_DSN: host=postgres user=test password=test dbname=test sslmode=disable
+      MSSQLX_MYSQL_DSN: test:test@tcp(mysql:3306)/test
+    depends_on:
+      - postgres
+      - mysql
+    networks:
+      - integration-test

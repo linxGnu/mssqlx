@@ -40,7 +40,8 @@ func ping(w *wrapper) (err error) {
 
 // DBs sqlx wrapper supports querying master-slave database connections for HA and scalability, auto-balancer integrated.
 type DBs struct {
-	driverName string
+	driverName      string
+	readQuerySource ReadQuerySource
 
 	masters *balancer
 	slaves  *balancer
@@ -63,6 +64,13 @@ func (dbs *DBs) getDBs(s []*wrapper) ([]*sqlx.DB, int) {
 		r[i] = v.db
 	}
 	return r, n
+}
+
+func (dbs *DBs) readBalancer() *balancer {
+	if dbs.readQuerySource == ReadQuerySourceAll {
+		return dbs.all
+	}
+	return dbs.slaves
 }
 
 // GetAllMasters get all master database connections, included failing one.
@@ -590,7 +598,7 @@ func _namedQuery(ctx context.Context, target *balancer, query string, arg interf
 // NamedQuery do named query.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedQuery(query string, arg interface{}) (*sqlx.Rows, error) {
-	return _namedQuery(context.Background(), dbs.slaves, query, arg)
+	return _namedQuery(context.Background(), dbs.readBalancer(), query, arg)
 }
 
 // NamedQueryOnMaster do named query on master.
@@ -602,7 +610,7 @@ func (dbs *DBs) NamedQueryOnMaster(query string, arg interface{}) (*sqlx.Rows, e
 // NamedQueryContext do named query with context.
 // Any named placeholder parameters are replaced with fields from arg.
 func (dbs *DBs) NamedQueryContext(ctx context.Context, query string, arg interface{}) (*sqlx.Rows, error) {
-	return _namedQuery(ctx, dbs.slaves, query, arg)
+	return _namedQuery(ctx, dbs.readBalancer(), query, arg)
 }
 
 // NamedQueryContextOnMaster do named query with context on master.
@@ -699,7 +707,7 @@ func _query(ctx context.Context, target *balancer, query string, args ...interfa
 // Query executes a query on slaves that returns rows, typically a SELECT.
 // The args are for any placeholder parameters in the query.
 func (dbs *DBs) Query(query string, args ...interface{}) (r *sql.Rows, err error) {
-	_, r, err = _query(context.Background(), dbs.slaves, query, args...)
+	_, r, err = _query(context.Background(), dbs.readBalancer(), query, args...)
 	return
 }
 
@@ -713,7 +721,7 @@ func (dbs *DBs) QueryOnMaster(query string, args ...interface{}) (r *sql.Rows, e
 // QueryContext executes a query on slaves that returns rows, typically a SELECT.
 // The args are for any placeholder parameters in the query.
 func (dbs *DBs) QueryContext(ctx context.Context, query string, args ...interface{}) (r *sql.Rows, err error) {
-	_, r, err = _query(ctx, dbs.slaves, query, args...)
+	_, r, err = _query(ctx, dbs.readBalancer(), query, args...)
 	return
 }
 
@@ -758,7 +766,7 @@ func _queryx(ctx context.Context, target *balancer, query string, args ...interf
 // Queryx executes a query on slaves that returns rows, typically a SELECT.
 // The args are for any placeholder parameters in the query.
 func (dbs *DBs) Queryx(query string, args ...interface{}) (r *sqlx.Rows, err error) {
-	_, r, err = _queryx(context.Background(), dbs.slaves, query, args...)
+	_, r, err = _queryx(context.Background(), dbs.readBalancer(), query, args...)
 	return
 }
 
@@ -772,7 +780,7 @@ func (dbs *DBs) QueryxOnMaster(query string, args ...interface{}) (r *sqlx.Rows,
 // QueryxContext executes a query on slaves that returns rows, typically a SELECT.
 // The args are for any placeholder parameters in the query.
 func (dbs *DBs) QueryxContext(ctx context.Context, query string, args ...interface{}) (r *sqlx.Rows, err error) {
-	_, r, err = _queryx(ctx, dbs.slaves, query, args...)
+	_, r, err = _queryx(ctx, dbs.readBalancer(), query, args...)
 	return
 }
 
@@ -801,7 +809,7 @@ func _queryRow(ctx context.Context, target *balancer, query string, args ...inte
 // QueryRow always returns a non-nil value. Errors are deferred until
 // Row's Scan method is called.
 func (dbs *DBs) QueryRow(query string, args ...interface{}) (r *sql.Row, err error) {
-	_, r, err = _queryRow(context.Background(), dbs.slaves, query, args...)
+	_, r, err = _queryRow(context.Background(), dbs.readBalancer(), query, args...)
 	return
 }
 
@@ -817,7 +825,7 @@ func (dbs *DBs) QueryRowOnMaster(query string, args ...interface{}) (r *sql.Row,
 // QueryRow always returns a non-nil value. Errors are deferred until
 // Row's Scan method is called.
 func (dbs *DBs) QueryRowContext(ctx context.Context, query string, args ...interface{}) (r *sql.Row, err error) {
-	_, r, err = _queryRow(ctx, dbs.slaves, query, args...)
+	_, r, err = _queryRow(ctx, dbs.readBalancer(), query, args...)
 	return
 }
 
@@ -848,7 +856,7 @@ func _queryRowx(ctx context.Context, target *balancer, query string, args ...int
 // QueryRow always returns a non-nil value. Errors are deferred until
 // Row's Scan method is called.
 func (dbs *DBs) QueryRowx(query string, args ...interface{}) (r *sqlx.Row, err error) {
-	_, r, err = _queryRowx(context.Background(), dbs.slaves, query, args...)
+	_, r, err = _queryRowx(context.Background(), dbs.readBalancer(), query, args...)
 	return
 }
 
@@ -864,7 +872,7 @@ func (dbs *DBs) QueryRowxOnMaster(query string, args ...interface{}) (r *sqlx.Ro
 // QueryRow always returns a non-nil value. Errors are deferred until
 // Row's Scan method is called.
 func (dbs *DBs) QueryRowxContext(ctx context.Context, query string, args ...interface{}) (r *sqlx.Row, err error) {
-	_, r, err = _queryRowx(ctx, dbs.slaves, query, args...)
+	_, r, err = _queryRowx(ctx, dbs.readBalancer(), query, args...)
 	return
 }
 
@@ -904,7 +912,7 @@ func _select(ctx context.Context, target *balancer, dest interface{}, query stri
 // Select do select on slaves.
 // Any placeholder parameters are replaced with supplied args.
 func (dbs *DBs) Select(dest interface{}, query string, args ...interface{}) (err error) {
-	_, err = _select(context.Background(), dbs.slaves, dest, query, args...)
+	_, err = _select(context.Background(), dbs.readBalancer(), dest, query, args...)
 	return
 }
 
@@ -918,7 +926,7 @@ func (dbs *DBs) SelectOnMaster(dest interface{}, query string, args ...interface
 // SelectContext do select on slaves with context.
 // Any placeholder parameters are replaced with supplied args.
 func (dbs *DBs) SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) (err error) {
-	_, err = _select(ctx, dbs.slaves, dest, query, args...)
+	_, err = _select(ctx, dbs.readBalancer(), dest, query, args...)
 	return
 }
 
@@ -974,7 +982,7 @@ func (dbs *DBs) GetOnMaster(dest interface{}, query string, args ...interface{})
 // Any placeholder parameters are replaced with supplied args.
 // An error is returned if the result set is empty.
 func (dbs *DBs) GetContext(ctx context.Context, dest interface{}, query string, args ...interface{}) (err error) {
-	_, err = _get(ctx, dbs.slaves, dest, query, args...)
+	_, err = _get(ctx, dbs.readBalancer(), dest, query, args...)
 	return
 }
 
@@ -1440,9 +1448,8 @@ func (dbs *DBs) BeginTxx(ctx context.Context, opts *sql.TxOptions) (res *sqlx.Tx
 // ConnectMasterSlaves to master-slave databases, healthchecks will ensure they are working
 // driverName: mysql, postgres, etc.
 // masterDSNs: data source names of Masters.
-// slaveDSNs: data source names of Slaves.
-// args: args[0] = true to indicates galera/wsrep cluster.
-func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []string, args ...interface{}) (*DBs, []error) {
+// slaveDSNs: data source names of ReadQuerySourceSlaves.
+func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []string, options ...Option) (*DBs, []error) {
 	// Validate slave address
 	if slaveDSNs == nil {
 		slaveDSNs = []string{}
@@ -1452,12 +1459,14 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 		masterDSNs = []string{}
 	}
 
-	isWsrep := false
-	if len(args) > 0 {
-		switch args[0].(type) {
-		case bool:
-			isWsrep = args[0].(bool)
-		}
+	// default cluster options
+	opts := &clusterOptions{
+		isWsrep:         false,
+		readQuerySource: ReadQuerySourceSlaves,
+	}
+
+	for _, optFn := range options {
+		optFn(opts)
 	}
 
 	nMaster := len(masterDSNs)
@@ -1466,15 +1475,16 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 
 	errResult := make([]error, nAll)
 	dbs := &DBs{
-		driverName: driverName,
+		driverName:      driverName,
+		readQuerySource: opts.readQuerySource,
 
-		masters:  newBalancer(nil, nMaster>>2, nMaster, isWsrep),
+		masters:  newBalancer(nil, nMaster>>2, nMaster, opts.isWsrep),
 		_masters: make([]*wrapper, nMaster),
 
-		slaves:  newBalancer(nil, nSlave>>2, nSlave, isWsrep),
+		slaves:  newBalancer(nil, nSlave>>2, nSlave, opts.isWsrep),
 		_slaves: make([]*wrapper, nSlave),
 
-		all:  newBalancer(nil, nAll>>2, nAll, isWsrep),
+		all:  newBalancer(nil, nAll>>2, nAll, opts.isWsrep),
 		_all: make([]*wrapper, nAll),
 	}
 

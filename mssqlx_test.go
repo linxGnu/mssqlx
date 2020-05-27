@@ -350,7 +350,7 @@ func TestDbBalancer(t *testing.T) {
 }
 
 func TestConnectMasterSlave(t *testing.T) {
-	dsn, driver := "user=test1 dbname=test1 sslmode=disable", "postgres"
+	dsn, driver := os.Getenv("MSSQLX_POSTGRES_DSN"), "postgres"
 
 	masterDSNs := []string{dsn, dsn, dsn}
 	slaveDSNs := []string{dsn, dsn}
@@ -380,7 +380,7 @@ func TestConnectMasterSlave(t *testing.T) {
 
 	// test another ping
 	for _, v := range db._all {
-		if e := ping(v); e != nil && e.Error() != "pq: role \"test1\" does not exist" {
+		if e := ping(v); e != nil && e.Error() != "pq: role \"test\" does not exist" {
 			t.Fatal(e)
 		}
 	}
@@ -441,7 +441,7 @@ func TestConnectMasterSlave(t *testing.T) {
 		t.Fatal("DestroySlave fail")
 	}
 
-	db, _ = ConnectMasterSlaves(driver, masterDSNs, slaveDSNs, true)
+	db, _ = ConnectMasterSlaves(driver, masterDSNs, slaveDSNs, WithWsrep())
 	if _, c := db.GetAllMasters(); c != 3 {
 		t.Fatal("Initialize master slave fail")
 	}
@@ -454,13 +454,24 @@ func TestConnectMasterSlave(t *testing.T) {
 		t.Fatal("Destroy fail")
 	}
 
-	db, _ = ConnectMasterSlaves(driver, nil, slaveDSNs, true)
+	db, _ = ConnectMasterSlaves(driver, nil, slaveDSNs, WithWsrep())
 	if _, c := db.GetAllMasters(); c != 0 {
 		t.Fatal("Initialize master slave fail")
 	}
 
-	db, _ = ConnectMasterSlaves(driver, nil, nil, true)
+	db, _ = ConnectMasterSlaves(driver, nil, nil, WithWsrep())
 	if _, c := db.GetAllSlaves(); c != 0 {
+		t.Fatal("Initialize master slave fail")
+	}
+
+	// check read-query source
+	db, _ = ConnectMasterSlaves(driver, nil, nil)
+	if db.readBalancer() != db.slaves {
+		t.Fatal("Initialize master slave fail")
+	}
+
+	db, _ = ConnectMasterSlaves(driver, nil, nil, WithReadQuerySource(ReadQuerySourceAll))
+	if db.readBalancer() != db.all {
 		t.Fatal("Initialize master slave fail")
 	}
 }
