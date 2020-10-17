@@ -524,34 +524,6 @@ func getDBFromBalancer(target *balancer) (db *wrapper, err error) {
 	return
 }
 
-func retryBackoff(query string, exec func() (interface{}, error)) (v interface{}, err error) {
-	for retry := 0; retry < 100; retry++ {
-		if v, err = exec(); err == nil {
-			return
-		}
-
-		switch err {
-		case sql.ErrConnDone:
-
-		case sql.ErrTxDone, sql.ErrNoRows:
-			return
-
-		default:
-			if isErrBadConn(err) || IsDeadlock(err) {
-				time.Sleep(5 * time.Millisecond)
-			} else {
-				return
-			}
-		}
-	}
-
-	if err == sql.ErrConnDone || isErrBadConn(err) {
-		reportError(query, err)
-	}
-
-	return
-}
-
 func shouldFailure(w *wrapper, isWsrep bool, err error) bool {
 	if err = parseError(w, err); err == nil {
 		return false
@@ -576,7 +548,7 @@ func _namedQuery(ctx context.Context, target *balancer, query string, arg interf
 			return
 		}
 
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.NamedQueryContext(ctx, query, arg)
 		})
 		if r != nil {
@@ -630,7 +602,7 @@ func _namedExec(ctx context.Context, target *balancer, query string, arg interfa
 		}
 
 		// executing
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.NamedExecContext(ctx, query, arg)
 		})
 		if r != nil {
@@ -684,7 +656,7 @@ func _query(ctx context.Context, target *balancer, query string, args ...interfa
 		}
 
 		// executing
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.QueryContext(ctx, query, args...)
 		})
 		if r != nil {
@@ -743,7 +715,7 @@ func _queryx(ctx context.Context, target *balancer, query string, args ...interf
 		}
 
 		// executing
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.QueryxContext(ctx, query, args...)
 		})
 		if r != nil {
@@ -888,7 +860,7 @@ func _select(ctx context.Context, target *balancer, dest interface{}, query stri
 		}
 
 		// executing
-		_, err = retryBackoff(query, func() (interface{}, error) {
+		_, err = retryFunc(query, func() (interface{}, error) {
 			return nil, w.db.SelectContext(ctx, dest, query, args...)
 		})
 
@@ -941,7 +913,7 @@ func _get(ctx context.Context, target *balancer, dest interface{}, query string,
 		}
 
 		// executing
-		_, err = retryBackoff(query, func() (interface{}, error) {
+		_, err = retryFunc(query, func() (interface{}, error) {
 			return nil, w.db.GetContext(ctx, dest, query, args...)
 		})
 
@@ -1001,7 +973,7 @@ func _exec(ctx context.Context, target *balancer, query string, args ...interfac
 		}
 
 		// executing
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.ExecContext(ctx, query, args...)
 		})
 		if r != nil {
@@ -1051,7 +1023,7 @@ func _prepareContext(ctx context.Context, target *balancer, query string) (dbx *
 		}
 
 		// executing
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.PrepareContext(ctx, query)
 		})
 		if r != nil {
@@ -1118,7 +1090,7 @@ func _preparexContext(ctx context.Context, target *balancer, query string) (dbx 
 		}
 
 		// executing
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.PreparexContext(ctx, query)
 		})
 		if r != nil {
@@ -1189,7 +1161,7 @@ func _prepareNamedContext(ctx context.Context, target *balancer, query string) (
 		}
 
 		// executing
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.PrepareNamedContext(ctx, query)
 		})
 		if r != nil {
@@ -1239,7 +1211,7 @@ func _mustExec(ctx context.Context, target *balancer, query string, args ...inte
 			panic(err)
 		}
 
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.ExecContext(ctx, query, args...)
 		})
 		if r != nil {
@@ -1277,72 +1249,6 @@ func (dbs *DBs) MustExecContext(ctx context.Context, query string, args ...inter
 // MustExecContextOnSlave do exec on slave only and panic on error
 func (dbs *DBs) MustExecContextOnSlave(ctx context.Context, query string, args ...interface{}) sql.Result {
 	return _mustExec(ctx, dbs.slaves, query, args...)
-}
-
-// Tx wraps std sql.Tx
-type Tx struct {
-	*sql.Tx
-}
-
-func (t *Tx) Commit() (err error) {
-	for retry := 0; retry < 50; retry++ {
-		if err = t.Tx.Commit(); err == nil {
-			return
-		}
-
-		switch err {
-		case sql.ErrConnDone:
-
-		case sql.ErrTxDone, sql.ErrNoRows:
-			return
-
-		default:
-			if isErrBadConn(err) || IsDeadlock(err) {
-				time.Sleep(5 * time.Millisecond)
-			} else {
-				return
-			}
-		}
-	}
-
-	if err == sql.ErrConnDone || isErrBadConn(err) {
-		reportError("transaction", err)
-	}
-
-	return
-}
-
-// Txx wraps std sqlx.Tx
-type Txx struct {
-	*sqlx.Tx
-}
-
-func (t *Txx) Commit() (err error) {
-	for retry := 0; retry < 50; retry++ {
-		if err = t.Tx.Commit(); err == nil {
-			return
-		}
-
-		switch err {
-		case sql.ErrConnDone:
-
-		case sql.ErrTxDone, sql.ErrNoRows:
-			return
-
-		default:
-			if isErrBadConn(err) || IsDeadlock(err) {
-				time.Sleep(5 * time.Millisecond)
-			} else {
-				return
-			}
-		}
-	}
-
-	if err == sql.ErrConnDone || isErrBadConn(err) {
-		reportError("transaction", err)
-	}
-
-	return
 }
 
 // MustBegin starts a transaction, and panics on error.
@@ -1415,7 +1321,7 @@ func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (res *Tx, err 
 		}
 
 		// executing
-		r, err = retryBackoff("START TRANSACTION", func() (interface{}, error) {
+		r, err = retryFunc("START TRANSACTION", func() (interface{}, error) {
 			return w.db.BeginTx(ctx, opts)
 		})
 		if r != nil {
@@ -1450,7 +1356,7 @@ func (dbs *DBs) Beginx() (res *Txx, err error) {
 		}
 
 		// executing
-		r, err = retryBackoff("START TRANSACTION", func() (interface{}, error) {
+		r, err = retryFunc("START TRANSACTION", func() (interface{}, error) {
 			return w.db.Beginx()
 		})
 		if r != nil {
@@ -1490,7 +1396,7 @@ func (dbs *DBs) BeginTxx(ctx context.Context, opts *sql.TxOptions) (res *Txx, er
 		}
 
 		// executing
-		r, err = retryBackoff("START TRANSACTION", func() (interface{}, error) {
+		r, err = retryFunc("START TRANSACTION", func() (interface{}, error) {
 			return w.db.BeginTxx(ctx, opts)
 		})
 		if r != nil {
