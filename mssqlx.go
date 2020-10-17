@@ -1312,6 +1312,39 @@ func (t *Tx) Commit() (err error) {
 	return
 }
 
+// Txx wraps std sqlx.Tx
+type Txx struct {
+	*sqlx.Tx
+}
+
+func (t *Txx) Commit() (err error) {
+	for retry := 0; retry < 50; retry++ {
+		if err = t.Tx.Commit(); err == nil {
+			return
+		}
+
+		switch err {
+		case sql.ErrConnDone:
+
+		case sql.ErrTxDone, sql.ErrNoRows:
+			return
+
+		default:
+			if isErrBadConn(err) || isDeadlock(err) {
+				time.Sleep(5 * time.Millisecond)
+			} else {
+				return
+			}
+		}
+	}
+
+	if err == sql.ErrConnDone || isErrBadConn(err) {
+		reportError("transaction", err)
+	}
+
+	return
+}
+
 // MustBegin starts a transaction, and panics on error.
 // Transaction is bound to one of master connections.
 func (dbs *DBs) MustBegin() *Tx {
@@ -1325,7 +1358,7 @@ func (dbs *DBs) MustBegin() *Tx {
 // MustBeginx starts a transaction, and panics on error.
 //
 // Transaction is bound to one of master connections.
-func (dbs *DBs) MustBeginx() *sqlx.Tx {
+func (dbs *DBs) MustBeginx() *Txx {
 	tx, err := dbs.Beginx()
 	if err != nil {
 		panic(err)
@@ -1341,7 +1374,7 @@ func (dbs *DBs) MustBeginx() *sqlx.Tx {
 // MustBeginContext is canceled.
 //
 // Transaction is bound to one of master connections.
-func (dbs *DBs) MustBeginTx(ctx context.Context, opts *sql.TxOptions) *sqlx.Tx {
+func (dbs *DBs) MustBeginTx(ctx context.Context, opts *sql.TxOptions) *Txx {
 	tx, err := dbs.BeginTxx(ctx, opts)
 	if err != nil {
 		panic(err)
@@ -1404,7 +1437,7 @@ func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (res *Tx, err 
 // Beginx begins a transaction.
 //
 // Transaction is bound to one of master connections.
-func (dbs *DBs) Beginx() (res *sqlx.Tx, err error) {
+func (dbs *DBs) Beginx() (res *Txx, err error) {
 	var (
 		w *wrapper
 		r interface{}
@@ -1421,7 +1454,9 @@ func (dbs *DBs) Beginx() (res *sqlx.Tx, err error) {
 			return w.db.Beginx()
 		})
 		if r != nil {
-			res = r.(*sqlx.Tx)
+			res = &Txx{
+				Tx: r.(*sqlx.Tx),
+			}
 		}
 
 		// check networking/wsrep error
@@ -1442,7 +1477,7 @@ func (dbs *DBs) Beginx() (res *sqlx.Tx, err error) {
 // BeginxContext is canceled.
 //
 // Transaction is bound to one of master connections.
-func (dbs *DBs) BeginTxx(ctx context.Context, opts *sql.TxOptions) (res *sqlx.Tx, err error) {
+func (dbs *DBs) BeginTxx(ctx context.Context, opts *sql.TxOptions) (res *Txx, err error) {
 	var (
 		w *wrapper
 		r interface{}
@@ -1459,7 +1494,9 @@ func (dbs *DBs) BeginTxx(ctx context.Context, opts *sql.TxOptions) (res *sqlx.Tx
 			return w.db.BeginTxx(ctx, opts)
 		})
 		if r != nil {
-			res = r.(*sqlx.Tx)
+			res = &Txx{
+				Tx: r.(*sqlx.Tx),
+			}
 		}
 
 		// check networking/wsrep error
