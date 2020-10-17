@@ -7,6 +7,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+// Stmtx wraps over sqlx.Stmt
 type Stmtx struct {
 	*sqlx.Stmt
 }

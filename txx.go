@@ -7,7 +7,7 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// Txx wraps std sqlx.Tx
+// Txx wraps over sqlx.Tx
 type Txx struct {
 	*sqlx.Tx
 }
@@ -67,7 +67,7 @@ func (t *Txx) Preparex(query string) (*Stmtx, error) {
 	return t.PreparexContext(context.Background(), query)
 }
 
-// PrepareContext creates a prepared statement for use within a transaction.
+// PreparexContext creates a prepared statement for use within a transaction.
 //
 // The returned statement operates within the transaction and will be closed when the transaction has been committed or rolled back.
 //

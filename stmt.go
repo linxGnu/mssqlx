@@ -5,6 +5,7 @@ import (
 	"database/sql"
 )
 
+// Stmt wraps over sql.Stmt
 type Stmt struct {
 	*sql.Stmt
 }

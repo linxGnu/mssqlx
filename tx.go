@@ -5,7 +5,7 @@ import (
 	"database/sql"
 )
 
-// Tx wraps std sql.Tx
+// Tx wraps over sql.Tx
 type Tx struct {
 	*sql.Tx
 }

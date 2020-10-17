@@ -1,5 +1,6 @@
 package mssqlx
 
+// ReadQuerySource enums.
 type ReadQuerySource int
 
 const (
@@ -18,6 +19,7 @@ type clusterOptions struct {
 	readQuerySource ReadQuerySource
 }
 
+// Option setter.
 type Option func(*clusterOptions)
 
 // WithWsrep indicates galera/wsrep cluster
