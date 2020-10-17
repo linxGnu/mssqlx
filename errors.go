@@ -6,24 +6,34 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 // ERROR 1213: Deadlock found when trying to get lock
-func isDeadlock(err error) (v bool) {
-	if err != nil {
-		se := err.Error()
-		v = strings.HasPrefix(se, "Error 1213:") || strings.HasPrefix(se, "ERROR 1213:")
-	}
-	return
+func isDeadlock(err error) bool {
+	return isErrCode(err, 1213)
 }
 
 // ERROR 1047: WSREP has not yet prepared node for application use
-func isWsrepNotReady(err error) (v bool) {
-	if err != nil {
-		se := err.Error()
-		v = strings.HasPrefix(se, "Error 1047:") || strings.HasPrefix(se, "ERROR 1047:")
+func isWsrepNotReady(err error) bool {
+	return isErrCode(err, 1047)
+}
+
+func isErrCode(err error, code int) bool {
+	if err == nil {
+		return false
 	}
-	return
+
+	switch mErr := err.(type) {
+
+	case *mysql.MySQLError:
+		return mErr.Number == uint16(code)
+
+	default:
+		se := strings.ToLower(err.Error())
+		return strings.HasPrefix(se, fmt.Sprintf("error %d:", code))
+	}
 }
 
 // check bad connection
