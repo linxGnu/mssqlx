@@ -1895,7 +1895,7 @@ func TestStressQueries(t *testing.T) {
 			}
 		}
 
-		limit := 16
+		limit := 8
 		if db == sqDBs {
 			limit = 2
 		}
