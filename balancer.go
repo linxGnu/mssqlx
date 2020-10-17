@@ -10,23 +10,18 @@ import (
 type balancer struct {
 	ctx                   context.Context
 	cancel                context.CancelFunc
-	driverName            string
 	dbs                   *dbList
 	fail                  chan *wrapper
 	isWsrep               bool
 	isMulti               bool
 	numberOfHealthChecker int
-	_p1                   [8]uint64 // prevent false sharing
+	_                     [8]uint64 // prevent false sharing
 	healthCheckPeriod     uint64
-	_p2                   [8]uint64
+	_                     [8]uint64
 }
 
 // new balancer and start health checkers
 func newBalancer(ctx context.Context, numHealthChecker int, numDbInstance int, isWsrep bool) *balancer {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	if numHealthChecker <= 0 {
 		numHealthChecker = 2 // at least two checkers
 	}

@@ -41,11 +41,11 @@ var empty = []*wrapper{}
 
 type dbList struct {
 	list         atomic.Value // []*wrapper
-	_p1          [9]uint64    // prevent false sharing
+	_            [9]uint64    // prevent false sharing
 	state        int32
-	_p2          [9]uint64
+	_            [9]uint64
 	currentIndex uint32
-	_p3          [9]uint64
+	_            [9]uint64
 }
 
 func (b *dbList) size() (v int) {

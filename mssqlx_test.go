@@ -25,6 +25,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/stretchr/testify/require"
 )
 
 var TestWPostgres = false // test with postgres?
@@ -156,12 +157,6 @@ type Person struct {
 	AddedAt   time.Time `db:"added_at"`
 }
 
-type Person2 struct {
-	FirstName sql.NullString `db:"first_name"`
-	LastName  sql.NullString `db:"last_name"`
-	Email     sql.NullString
-}
-
 type Place struct {
 	Country string
 	City    sql.NullString
@@ -253,15 +248,21 @@ func _loadDefaultFixture(db *DBs, t *testing.T) {
 		tx.MustExec(tx.Rebind("INSERT INTO capplace (\"COUNTRY\", \"TELCODE\") VALUES (?, ?)"), "Sarf Efrica", "27")
 	}
 
-	tx.Commit()
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
 
 	tx = db.MustBeginTx(context.Background(), nil)
 	tx.MustExec(tx.Rebind("INSERT INTO employees (name, id, boss_id) VALUES (?, ?, ?)"), "Joe", "1", "4444")
 	tx.MustExec(tx.Rebind("INSERT INTO employees (name, id, boss_id) VALUES (?, ?, ?)"), "Martin", "2", "4444")
-	tx.Commit()
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
 
 	txx := db.MustBegin()
-	txx.Exec(db.Rebind("INSERT INTO employees (name, id) VALUES (?, ?)"), "Peter", "4444")
+	if _, err := txx.Exec(db.Rebind("INSERT INTO employees (name, id) VALUES (?, ?)"), "Peter", "4444"); err != nil {
+		t.Fatal(err)
+	}
 	if e := txx.Commit(); e != nil {
 		panic(e)
 	}
@@ -287,7 +288,7 @@ func TestParseError(t *testing.T) {
 }
 
 func TestDbBalancer(t *testing.T) {
-	dbB := newBalancer(nil, 0, 4, true)
+	dbB := newBalancer(context.Background(), 0, 4, true)
 
 	if dbB.numberOfHealthChecker != 2 {
 		t.Fatal("DbBalancer init fail")
@@ -350,129 +351,130 @@ func TestDbBalancer(t *testing.T) {
 }
 
 func TestConnectMasterSlave(t *testing.T) {
-	dsn, driver := os.Getenv("MSSQLX_POSTGRES_DSN"), "postgres"
+	if dsn, driver := os.Getenv("MSSQLX_POSTGRES_DSN"), "postgres"; dsn != "skip" && dsn != "" {
 
-	masterDSNs := []string{dsn, dsn, dsn}
-	slaveDSNs := []string{dsn, dsn}
+		masterDSNs := []string{dsn, dsn, dsn}
+		slaveDSNs := []string{dsn, dsn}
 
-	db, _ := ConnectMasterSlaves(driver, masterDSNs, slaveDSNs)
-	if db.DriverName() != "postgres" {
-		t.Fatal("DriverName fail")
-	}
-
-	// test ping
-	if errs := db.Ping(); errs == nil || len(errs) != 5 {
-		t.Fatal("Ping fail")
-	}
-	if errs := db.PingMaster(); errs == nil || len(errs) != 3 {
-		t.Fatal("Ping fail")
-	}
-	if errs := db.PingSlave(); errs == nil || len(errs) != 2 {
-		t.Fatal("Ping fail")
-	}
-
-	// ensure no nil dbs
-	for _, v := range db._all {
-		if v.db == nil {
-			t.Fatal("Nil DB in list")
+		db, _ := ConnectMasterSlaves(driver, masterDSNs, slaveDSNs)
+		if db.DriverName() != "postgres" {
+			t.Fatal("DriverName fail")
 		}
-	}
 
-	// test another ping
-	for _, v := range db._all {
-		if e := ping(v); e != nil && e.Error() != "pq: role \"test\" does not exist" {
-			t.Fatal(e)
+		// test ping
+		if errs := db.Ping(); errs == nil || len(errs) != 5 {
+			t.Fatal("Ping fail")
 		}
-	}
+		if errs := db.PingMaster(); errs == nil || len(errs) != 3 {
+			t.Fatal("Ping fail")
+		}
+		if errs := db.PingSlave(); errs == nil || len(errs) != 2 {
+			t.Fatal("Ping fail")
+		}
 
-	// test SetHealthCheckPeriod
-	db.SetHealthCheckPeriod(200)
-	if db.masters.healthCheckPeriod != 200 || db.slaves.healthCheckPeriod != 200 {
-		t.Fatal("SetHealthCheckPeriod fail")
-	}
-	db.SetMasterHealthCheckPeriod(300)
-	if db.masters.healthCheckPeriod != 300 || db.slaves.healthCheckPeriod != 200 {
-		t.Fatal("SetMasterHealthCheckPeriod fail")
-	}
-	db.SetSlaveHealthCheckPeriod(311)
-	if db.slaves.healthCheckPeriod != 311 {
-		t.Fatal("SetSlaveHealthCheckPeriod fail")
-	}
+		// ensure no nil dbs
+		for _, v := range db._all {
+			if v.db == nil {
+				t.Fatal("Nil DB in list")
+			}
+		}
 
-	// test set idle connection
-	db.SetMaxIdleConns(12)
-	db.SetMasterMaxIdleConns(13)
-	db.SetSlaveMaxIdleConns(14)
+		// test another ping
+		for _, v := range db._all {
+			if e := ping(v); e != nil && e.Error() != "pq: role \"test\" does not exist" {
+				t.Fatal(e)
+			}
+		}
 
-	// test set max open connection
-	db.SetMaxOpenConns(16)
-	db.SetMasterMaxOpenConns(12)
-	db.SetSlaveMaxOpenConns(19)
+		// test SetHealthCheckPeriod
+		db.SetHealthCheckPeriod(200)
+		if db.masters.healthCheckPeriod != 200 || db.slaves.healthCheckPeriod != 200 {
+			t.Fatal("SetHealthCheckPeriod fail")
+		}
+		db.SetMasterHealthCheckPeriod(300)
+		if db.masters.healthCheckPeriod != 300 || db.slaves.healthCheckPeriod != 200 {
+			t.Fatal("SetMasterHealthCheckPeriod fail")
+		}
+		db.SetSlaveHealthCheckPeriod(311)
+		if db.slaves.healthCheckPeriod != 311 {
+			t.Fatal("SetSlaveHealthCheckPeriod fail")
+		}
 
-	// set connection max life time
-	db.SetConnMaxLifetime(16 * time.Second)
-	db.SetMasterConnMaxLifetime(-1)
-	db.SetSlaveConnMaxLifetime(20 * time.Second)
+		// test set idle connection
+		db.SetMaxIdleConns(12)
+		db.SetMasterMaxIdleConns(13)
+		db.SetSlaveMaxIdleConns(14)
 
-	// get stats
-	if stats := db.Stats(); stats == nil || len(stats) != 5 {
-		t.Fatal("Stats fail")
-	}
-	if stats := db.StatsMaster(); stats == nil || len(stats) != 3 {
-		t.Fatal("StatsMaster fail")
-	}
-	if stats := db.StatsSlave(); stats == nil || len(stats) != 2 {
-		t.Fatal("StatsSlave fail")
-	}
+		// test set max open connection
+		db.SetMaxOpenConns(16)
+		db.SetMasterMaxOpenConns(12)
+		db.SetSlaveMaxOpenConns(19)
 
-	if _, c := db.GetAllSlaves(); c != 2 {
-		t.Fatal("GetAllSlaves fail")
-	}
+		// set connection max life time
+		db.SetConnMaxLifetime(16 * time.Second)
+		db.SetMasterConnMaxLifetime(-1)
+		db.SetSlaveConnMaxLifetime(20 * time.Second)
 
-	if _, c := db.GetAllMasters(); c != 3 {
-		t.Fatal("GetAllMasters fail")
-	}
+		// get stats
+		if stats := db.Stats(); stats == nil || len(stats) != 5 {
+			t.Fatal("Stats fail")
+		}
+		if stats := db.StatsMaster(); stats == nil || len(stats) != 3 {
+			t.Fatal("StatsMaster fail")
+		}
+		if stats := db.StatsSlave(); stats == nil || len(stats) != 2 {
+			t.Fatal("StatsSlave fail")
+		}
 
-	// test destroy master / slave
-	if errs := db.DestroyMaster(); errs == nil || len(errs) != 3 {
-		t.Fatal("DestroyMaster fail")
-	}
-	if errs := db.DestroySlave(); errs == nil || len(errs) != 2 {
-		t.Fatal("DestroySlave fail")
-	}
+		if _, c := db.GetAllSlaves(); c != 2 {
+			t.Fatal("GetAllSlaves fail")
+		}
 
-	db, _ = ConnectMasterSlaves(driver, masterDSNs, slaveDSNs, WithWsrep())
-	if _, c := db.GetAllMasters(); c != 3 {
-		t.Fatal("Initialize master slave fail")
-	}
-	if _, c := db.GetAllSlaves(); c != 2 {
-		t.Fatal("Initialize master slave fail")
-	}
+		if _, c := db.GetAllMasters(); c != 3 {
+			t.Fatal("GetAllMasters fail")
+		}
 
-	// test destroy all
-	if errs := db.Destroy(); errs == nil || len(errs) != 5 {
-		t.Fatal("Destroy fail")
-	}
+		// test destroy master / slave
+		if errs := db.DestroyMaster(); errs == nil || len(errs) != 3 {
+			t.Fatal("DestroyMaster fail")
+		}
+		if errs := db.DestroySlave(); errs == nil || len(errs) != 2 {
+			t.Fatal("DestroySlave fail")
+		}
 
-	db, _ = ConnectMasterSlaves(driver, nil, slaveDSNs, WithWsrep())
-	if _, c := db.GetAllMasters(); c != 0 {
-		t.Fatal("Initialize master slave fail")
-	}
+		db, _ = ConnectMasterSlaves(driver, masterDSNs, slaveDSNs, WithWsrep())
+		if _, c := db.GetAllMasters(); c != 3 {
+			t.Fatal("Initialize master slave fail")
+		}
+		if _, c := db.GetAllSlaves(); c != 2 {
+			t.Fatal("Initialize master slave fail")
+		}
 
-	db, _ = ConnectMasterSlaves(driver, nil, nil, WithWsrep())
-	if _, c := db.GetAllSlaves(); c != 0 {
-		t.Fatal("Initialize master slave fail")
-	}
+		// test destroy all
+		if errs := db.Destroy(); errs == nil || len(errs) != 5 {
+			t.Fatal("Destroy fail")
+		}
 
-	// check read-query source
-	db, _ = ConnectMasterSlaves(driver, nil, nil)
-	if db.readBalancer() != db.slaves {
-		t.Fatal("Initialize master slave fail")
-	}
+		db, _ = ConnectMasterSlaves(driver, nil, slaveDSNs, WithWsrep())
+		if _, c := db.GetAllMasters(); c != 0 {
+			t.Fatal("Initialize master slave fail")
+		}
 
-	db, _ = ConnectMasterSlaves(driver, nil, nil, WithReadQuerySource(ReadQuerySourceAll))
-	if db.readBalancer() != db.all {
-		t.Fatal("Initialize master slave fail")
+		db, _ = ConnectMasterSlaves(driver, nil, nil, WithWsrep())
+		if _, c := db.GetAllSlaves(); c != 0 {
+			t.Fatal("Initialize master slave fail")
+		}
+
+		// check read-query source
+		db, _ = ConnectMasterSlaves(driver, nil, nil)
+		if db.readBalancer() != db.slaves {
+			t.Fatal("Initialize master slave fail")
+		}
+
+		db, _ = ConnectMasterSlaves(driver, nil, nil, WithReadQuerySource(ReadQuerySourceAll))
+		if db.readBalancer() != db.all {
+			t.Fatal("Initialize master slave fail")
+		}
 	}
 }
 
@@ -522,7 +524,7 @@ func TestGlobalFunc(t *testing.T) {
 	_db4, _ := sqlx.Open("postgres", dsn)
 	db4 := &wrapper{db: _db4, dsn: dsn}
 
-	dbB := newBalancer(nil, -1, 2, true)
+	dbB := newBalancer(context.Background(), -1, 2, true)
 	dbB.add(db1)
 	dbB.add(db2)
 	if _, _, err := _query(context.Background(), dbB, "SELECT 1"); err != ErrNoConnectionOrWsrep {
@@ -530,7 +532,7 @@ func TestGlobalFunc(t *testing.T) {
 	}
 	dbB.destroy()
 
-	dbB = newBalancer(nil, -1, 2, true)
+	dbB = newBalancer(context.Background(), -1, 2, true)
 	dbB.add(db1)
 	dbB.add(db2)
 	tmp := 1
@@ -1146,12 +1148,6 @@ func TestNamedQueries(t *testing.T) {
 		}
 		rows.Close()
 
-		type JSONPerson struct {
-			FirstName sql.NullString `json:"FIRST"`
-			LastName  sql.NullString `json:"last_name"`
-			Email     sql.NullString
-		}
-
 		// Test nested structs
 		type Place struct {
 			ID   int            `db:"id"`
@@ -1258,8 +1254,10 @@ func TestNilInsert(t *testing.T) {
 		var v, v2 TT
 		r := db.Rebind
 
-		db.Exec(r(`INSERT INTO tt (id) VALUES (1)`))
-		db.Get(&v, r(`SELECT * FROM tt`))
+		_, err := db.Exec(r(`INSERT INTO tt (id) VALUES (1)`))
+		require.Nil(t, err)
+
+		require.Nil(t, db.Get(&v, r(`SELECT * FROM tt`)))
 		if v.ID != 1 {
 			t.Errorf("Expecting id of 1, got %v", v.ID)
 		}
@@ -1273,9 +1271,10 @@ func TestNilInsert(t *testing.T) {
 		// as reflectx.FieldByIndexes attempts to allocate nil pointer receivers for
 		// writing.  This was fixed by creating & using the reflectx.FieldByIndexesReadOnly
 		// function.  This next line is important as it provides the only coverage for this.
-		db.NamedExec(`INSERT INTO tt (id, value) VALUES (:id, :value)`, v)
+		_, err = db.NamedExec(`INSERT INTO tt (id, value) VALUES (:id, :value)`, v)
+		require.Nil(t, err)
 
-		db.Get(&v2, r(`SELECT * FROM tt WHERE id=2`))
+		require.Nil(t, db.Get(&v2, r(`SELECT * FROM tt WHERE id=2`)))
 		if v.ID != v2.ID {
 			t.Errorf("%v != %v", v.ID, v2.ID)
 		}
@@ -1607,7 +1606,7 @@ func TestUsages(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		tx.Commit()
+		require.Nil(t, tx.Commit())
 
 		dbx, stmt2, err = db.PreparexContext(context.Background(), db.Rebind("SELECT * FROM person WHERE first_name=?"))
 		if err != nil {
@@ -1624,7 +1623,7 @@ func TestUsages(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		tx.Commit()
+		require.Nil(t, tx.Commit())
 
 		dbx, stmt2, err = db.PreparexOnSlave(db.Rebind("SELECT * FROM person WHERE first_name=?"))
 		if err != nil {
@@ -1641,7 +1640,7 @@ func TestUsages(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		tx.Commit()
+		require.Nil(t, tx.Commit())
 
 		dbx, stmt2, err = db.PreparexContextOnSlave(context.Background(), db.Rebind("SELECT * FROM person WHERE first_name=?"))
 		if err != nil {
@@ -1658,7 +1657,7 @@ func TestUsages(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		tx.Commit()
+		require.Nil(t, tx.Commit())
 
 		dbx1, stmt3, err := db.Prepare(db.Rebind("SELECT * FROM person WHERE first_name=?"))
 		if err != nil {
@@ -1675,7 +1674,7 @@ func TestUsages(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		tx1.Commit()
+		require.Nil(t, tx1.Commit())
 
 		dbx1, stmt3, err = db.PrepareContext(context.Background(), db.Rebind("SELECT * FROM person WHERE first_name=?"))
 		if err != nil {
@@ -1692,7 +1691,7 @@ func TestUsages(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		tx1.Commit()
+		require.Nil(t, tx1.Commit())
 
 		dbx1, stmt3, err = db.PrepareOnSlave(db.Rebind("SELECT * FROM person WHERE first_name=?"))
 		if err != nil {
@@ -1709,7 +1708,8 @@ func TestUsages(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		tx1.Commit()
+		require.Nil(t, tx1.Commit())
+
 		isSlave := false
 		for _, v := range db._slaves {
 			if v.db == dbx1 {
@@ -1736,7 +1736,8 @@ func TestUsages(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		tx1.Commit()
+		require.Nil(t, tx1.Commit())
+
 		isSlave = false
 		for _, v := range db._slaves {
 			if v.db == dbx1 {
@@ -1770,22 +1771,17 @@ func Test_EmbeddedLiterals(t *testing.T) {
 			K *string
 		}
 
-		db.Exec(db.Rebind("INSERT INTO x (k) VALUES (?), (?), (?);"), "one", "two", "three")
+		_, err := db.Exec(db.Rebind("INSERT INTO x (k) VALUES (?), (?), (?);"), "one", "two", "three")
+		require.Nil(t, err)
 
 		target := t1{}
-		err := db.Get(&target, db.Rebind("SELECT * FROM x WHERE k=?"), "one")
-		if err != nil {
-			t.Error(err)
-		}
+		require.Nil(t, db.Get(&target, db.Rebind("SELECT * FROM x WHERE k=?"), "one"))
 		if *target.K != "one" {
 			t.Error("Expected target.K to be `one`, got ", target.K)
 		}
 
 		target2 := t2{}
-		err = db.Get(&target2, db.Rebind("SELECT * FROM x WHERE k=?"), "one")
-		if err != nil {
-			t.Error(err)
-		}
+		require.Nil(t, db.Get(&target2, db.Rebind("SELECT * FROM x WHERE k=?"), "one"))
 		if *target2.K != "one" {
 			t.Errorf("Expected target2.K to be `one`, got `%v`", target2.K)
 		}
@@ -1869,10 +1865,14 @@ func TestStressQueries(t *testing.T) {
 				if e != nil {
 					t.Log(e)
 				} else {
-					tx.Exec(db.Rebind("INSERT INTO stress VALUES (?, ?)"), "b", 13)
-					tx.Exec(db.Rebind("DELETE FROM stress WHERE k = ?"), "a")
+					_, err := tx.Exec(db.Rebind("INSERT INTO stress VALUES (?, ?)"), "b", 13)
+					require.Nil(t, err)
+
+					_, err = tx.Exec(db.Rebind("DELETE FROM stress WHERE k = ?"), "a")
+					require.Nil(t, err)
+
 					if e = tx.Commit(); e != nil {
-						tx.Rollback()
+						require.Nil(t, tx.Rollback())
 						t.Log(e)
 					}
 				}
@@ -1881,10 +1881,14 @@ func TestStressQueries(t *testing.T) {
 				if e != nil {
 					t.Log(e)
 				} else {
-					txx.Exec(db.Rebind("INSERT INTO stress VALUES (?, ?)"), "c", 13)
-					txx.Exec(db.Rebind("DELETE FROM stress WHERE k = ?"), "b")
+					_, err := txx.Exec(db.Rebind("INSERT INTO stress VALUES (?, ?)"), "c", 13)
+					require.Nil(t, err)
+
+					_, err = txx.Exec(db.Rebind("DELETE FROM stress WHERE k = ?"), "b")
+					require.Nil(t, err)
+
 					if e = txx.Commit(); e != nil {
-						txx.Rollback()
+						require.Nil(t, txx.Rollback())
 						t.Log(e)
 					}
 				}

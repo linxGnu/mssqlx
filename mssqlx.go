@@ -794,15 +794,13 @@ func (dbs *DBs) QueryxContextOnMaster(ctx context.Context, query string, args ..
 func _queryRow(ctx context.Context, target *balancer, query string, args ...interface{}) (dbr *wrapper, res *sql.Row, err error) {
 	var w *wrapper
 
-	for {
-		if w, err = getDBFromBalancer(target); err != nil {
-			reportError(query, err)
-			return
-		}
-
+	if w, err = getDBFromBalancer(target); err != nil {
+		reportError(query, err)
+	} else {
 		res, dbr = w.db.QueryRowContext(ctx, query, args...), w
-		return
 	}
+
+	return
 }
 
 // QueryRow executes a query on slaves that is expected to return at most one row.
@@ -840,15 +838,13 @@ func (dbs *DBs) QueryRowContextOnMaster(ctx context.Context, query string, args 
 func _queryRowx(ctx context.Context, target *balancer, query string, args ...interface{}) (dbr *wrapper, res *sqlx.Row, err error) {
 	var w *wrapper
 
-	for {
-		if w, err = getDBFromBalancer(target); err != nil {
-			reportError(query, err)
-			return
-		}
-
+	if w, err = getDBFromBalancer(target); err != nil {
+		reportError(query, err)
+	} else {
 		res, dbr = w.db.QueryRowxContext(ctx, query, args...), w
-		return
 	}
+
+	return
 }
 
 // QueryRowx executes a query on slaves that is expected to return at most one row.
@@ -1478,13 +1474,13 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 		driverName:      driverName,
 		readQuerySource: opts.readQuerySource,
 
-		masters:  newBalancer(nil, nMaster>>2, nMaster, opts.isWsrep),
+		masters:  newBalancer(context.Background(), nMaster>>2, nMaster, opts.isWsrep),
 		_masters: make([]*wrapper, nMaster),
 
-		slaves:  newBalancer(nil, nSlave>>2, nSlave, opts.isWsrep),
+		slaves:  newBalancer(context.Background(), nSlave>>2, nSlave, opts.isWsrep),
 		_slaves: make([]*wrapper, nSlave),
 
-		all:  newBalancer(nil, nAll>>2, nAll, opts.isWsrep),
+		all:  newBalancer(context.Background(), nAll>>2, nAll, opts.isWsrep),
 		_all: make([]*wrapper, nAll),
 	}
 
