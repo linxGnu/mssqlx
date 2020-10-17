@@ -351,13 +351,13 @@ func TestDbBalancer(t *testing.T) {
 }
 
 func TestConnectMasterSlave(t *testing.T) {
-	if dsn, driver := os.Getenv("MSSQLX_POSTGRES_DSN"), "postgres"; dsn != "skip" && dsn != "" {
+	if dsn, driver := os.Getenv("MSSQLX_MYSQL_DSN"), "mysql"; dsn != "skip" && dsn != "" {
 
 		masterDSNs := []string{dsn, dsn, dsn}
 		slaveDSNs := []string{dsn, dsn}
 
 		db, _ := ConnectMasterSlaves(driver, masterDSNs, slaveDSNs)
-		if db.DriverName() != "postgres" {
+		if db.DriverName() != "mysql" {
 			t.Fatal("DriverName fail")
 		}
 
