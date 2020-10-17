@@ -10,6 +10,21 @@ import (
 	"github.com/go-sql-driver/mysql"
 )
 
+// check bad connection
+func isErrBadConn(err error) bool {
+	if err != nil {
+		if err == driver.ErrBadConn || err == mysql.ErrInvalidConn {
+			return true
+		}
+
+		// Postgres/Mysql Driver returns default driver.ErrBadConn
+		// Mysql Driver ("github.com/go-sql-driver/mysql") is not
+		s := strings.ToLower(err.Error())
+		return s == "invalid connection" || s == "bad connection"
+	}
+	return false
+}
+
 // ERROR 1213: Deadlock found when trying to get lock
 func isDeadlock(err error) bool {
 	return isErrCode(err, 1213)
@@ -34,17 +49,6 @@ func isErrCode(err error, code int) bool {
 		se := strings.ToLower(err.Error())
 		return strings.HasPrefix(se, fmt.Sprintf("error %d:", code))
 	}
-}
-
-// check bad connection
-func isErrBadConn(err error) (v bool) {
-	if err != nil {
-		// Postgres/Mysql Driver returns default driver.ErrBadConn
-		// Mysql Driver ("github.com/go-sql-driver/mysql") is not
-		s := err.Error()
-		v = err == driver.ErrBadConn || s == "invalid connection" || s == "bad connection"
-	}
-	return
 }
 
 func parseError(w *wrapper, err error) error {

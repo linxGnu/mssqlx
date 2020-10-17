@@ -525,7 +525,7 @@ func getDBFromBalancer(target *balancer) (db *wrapper, err error) {
 }
 
 func retryBackoff(query string, exec func() (interface{}, error)) (v interface{}, err error) {
-	for retry := 0; retry < 200; retry++ {
+	for retry := 0; retry < 100; retry++ {
 		if v, err = exec(); err == nil {
 			return
 		}
@@ -537,13 +537,10 @@ func retryBackoff(query string, exec func() (interface{}, error)) (v interface{}
 			return
 
 		default:
-			if isErrBadConn(err) {
+			if isErrBadConn(err) || isDeadlock(err) {
 				time.Sleep(5 * time.Millisecond)
-			} else if !isDeadlock(err) {
-				return
 			} else {
-				time.Sleep(5 * time.Millisecond)
-				retry = 0
+				return
 			}
 		}
 	}
@@ -1282,9 +1279,42 @@ func (dbs *DBs) MustExecContextOnSlave(ctx context.Context, query string, args .
 	return _mustExec(ctx, dbs.slaves, query, args...)
 }
 
+// Tx wraps std sql.Tx
+type Tx struct {
+	*sql.Tx
+}
+
+func (t *Tx) Commit() (err error) {
+	for retry := 0; retry < 50; retry++ {
+		if err = t.Tx.Commit(); err == nil {
+			return
+		}
+
+		switch err {
+		case sql.ErrConnDone:
+
+		case sql.ErrTxDone, sql.ErrNoRows:
+			return
+
+		default:
+			if isErrBadConn(err) || isDeadlock(err) {
+				time.Sleep(5 * time.Millisecond)
+			} else {
+				return
+			}
+		}
+	}
+
+	if err == sql.ErrConnDone || isErrBadConn(err) {
+		reportError("transaction", err)
+	}
+
+	return
+}
+
 // MustBegin starts a transaction, and panics on error.
 // Transaction is bound to one of master connections.
-func (dbs *DBs) MustBegin() *sql.Tx {
+func (dbs *DBs) MustBegin() *Tx {
 	tx, err := dbs.Begin()
 	if err != nil {
 		panic(err)
@@ -1293,7 +1323,7 @@ func (dbs *DBs) MustBegin() *sql.Tx {
 }
 
 // MustBeginx starts a transaction, and panics on error.
-// Returns an *sqlx.Tx instead of an *sql.Tx.
+//
 // Transaction is bound to one of master connections.
 func (dbs *DBs) MustBeginx() *sqlx.Tx {
 	tx, err := dbs.Beginx()
@@ -1303,8 +1333,7 @@ func (dbs *DBs) MustBeginx() *sqlx.Tx {
 	return tx
 }
 
-// MustBeginTx starts a transaction, and panics on error.  Returns an *sqlx.Tx instead
-// of an *sql.Tx.
+// MustBeginTx starts a transaction, and panics on error.
 //
 // The provided context is used until the transaction is committed or rolled
 // back. If the context is canceled, the sql package will roll back the
@@ -1324,7 +1353,7 @@ func (dbs *DBs) MustBeginTx(ctx context.Context, opts *sql.TxOptions) *sqlx.Tx {
 // the driver.
 //
 // Transaction is bound to one of master connections.
-func (dbs *DBs) Begin() (*sql.Tx, error) {
+func (dbs *DBs) Begin() (*Tx, error) {
 	return dbs.BeginTx(context.Background(), nil)
 }
 
@@ -1340,7 +1369,7 @@ func (dbs *DBs) Begin() (*sql.Tx, error) {
 // an error will be returned.
 //
 // Transaction is bound to one of master connections.
-func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (res *sql.Tx, err error) {
+func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (res *Tx, err error) {
 	var (
 		w *wrapper
 		r interface{}
@@ -1357,7 +1386,9 @@ func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (res *sql.Tx, 
 			return w.db.BeginTx(ctx, opts)
 		})
 		if r != nil {
-			res = r.(*sql.Tx)
+			res = &Tx{
+				Tx: r.(*sql.Tx),
+			}
 		}
 
 		// check networking/wsrep error
@@ -1370,7 +1401,7 @@ func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (res *sql.Tx, 
 	}
 }
 
-// Beginx begins a transaction and returns an *sqlx.Tx instead of an *sql.Tx.
+// Beginx begins a transaction.
 //
 // Transaction is bound to one of master connections.
 func (dbs *DBs) Beginx() (res *sqlx.Tx, err error) {
@@ -1403,8 +1434,7 @@ func (dbs *DBs) Beginx() (res *sqlx.Tx, err error) {
 	}
 }
 
-// BeginTxx begins a transaction and returns an *sqlx.Tx instead of an
-// *sql.Tx.
+// BeginTxx begins a transaction.
 //
 // The provided context is used until the transaction is committed or rolled
 // back. If the context is canceled, the sql package will roll back the
