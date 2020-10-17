@@ -524,42 +524,12 @@ func getDBFromBalancer(target *balancer) (db *wrapper, err error) {
 	return
 }
 
-func retryBackoff(query string, exec func() (interface{}, error)) (v interface{}, err error) {
-	for retry := 0; retry < 200; retry++ {
-		if v, err = exec(); err == nil {
-			return
-		}
-
-		switch err {
-		case sql.ErrConnDone:
-
-		case sql.ErrTxDone, sql.ErrNoRows:
-			return
-
-		default:
-			if isErrBadConn(err) {
-				time.Sleep(5 * time.Millisecond)
-			} else if !isDeadlock(err) {
-				return
-			} else {
-				time.Sleep(10 * time.Millisecond)
-			}
-		}
-	}
-
-	if err == sql.ErrConnDone || isErrBadConn(err) {
-		reportError(query, err)
-	}
-
-	return
-}
-
 func shouldFailure(w *wrapper, isWsrep bool, err error) bool {
 	if err = parseError(w, err); err == nil {
 		return false
 	}
 
-	if err == ErrNetwork || (isWsrep && isWsrepNotReady(err)) {
+	if err == ErrNetwork || (isWsrep && IsWsrepNotReady(err)) {
 		return true
 	}
 
@@ -578,7 +548,7 @@ func _namedQuery(ctx context.Context, target *balancer, query string, arg interf
 			return
 		}
 
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.NamedQueryContext(ctx, query, arg)
 		})
 		if r != nil {
@@ -632,7 +602,7 @@ func _namedExec(ctx context.Context, target *balancer, query string, arg interfa
 		}
 
 		// executing
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.NamedExecContext(ctx, query, arg)
 		})
 		if r != nil {
@@ -686,7 +656,7 @@ func _query(ctx context.Context, target *balancer, query string, args ...interfa
 		}
 
 		// executing
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.QueryContext(ctx, query, args...)
 		})
 		if r != nil {
@@ -745,7 +715,7 @@ func _queryx(ctx context.Context, target *balancer, query string, args ...interf
 		}
 
 		// executing
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.QueryxContext(ctx, query, args...)
 		})
 		if r != nil {
@@ -794,15 +764,13 @@ func (dbs *DBs) QueryxContextOnMaster(ctx context.Context, query string, args ..
 func _queryRow(ctx context.Context, target *balancer, query string, args ...interface{}) (dbr *wrapper, res *sql.Row, err error) {
 	var w *wrapper
 
-	for {
-		if w, err = getDBFromBalancer(target); err != nil {
-			reportError(query, err)
-			return
-		}
-
+	if w, err = getDBFromBalancer(target); err != nil {
+		reportError(query, err)
+	} else {
 		res, dbr = w.db.QueryRowContext(ctx, query, args...), w
-		return
 	}
+
+	return
 }
 
 // QueryRow executes a query on slaves that is expected to return at most one row.
@@ -840,15 +808,13 @@ func (dbs *DBs) QueryRowContextOnMaster(ctx context.Context, query string, args 
 func _queryRowx(ctx context.Context, target *balancer, query string, args ...interface{}) (dbr *wrapper, res *sqlx.Row, err error) {
 	var w *wrapper
 
-	for {
-		if w, err = getDBFromBalancer(target); err != nil {
-			reportError(query, err)
-			return
-		}
-
+	if w, err = getDBFromBalancer(target); err != nil {
+		reportError(query, err)
+	} else {
 		res, dbr = w.db.QueryRowxContext(ctx, query, args...), w
-		return
 	}
+
+	return
 }
 
 // QueryRowx executes a query on slaves that is expected to return at most one row.
@@ -894,7 +860,7 @@ func _select(ctx context.Context, target *balancer, dest interface{}, query stri
 		}
 
 		// executing
-		_, err = retryBackoff(query, func() (interface{}, error) {
+		_, err = retryFunc(query, func() (interface{}, error) {
 			return nil, w.db.SelectContext(ctx, dest, query, args...)
 		})
 
@@ -947,7 +913,7 @@ func _get(ctx context.Context, target *balancer, dest interface{}, query string,
 		}
 
 		// executing
-		_, err = retryBackoff(query, func() (interface{}, error) {
+		_, err = retryFunc(query, func() (interface{}, error) {
 			return nil, w.db.GetContext(ctx, dest, query, args...)
 		})
 
@@ -1007,7 +973,7 @@ func _exec(ctx context.Context, target *balancer, query string, args ...interfac
 		}
 
 		// executing
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.ExecContext(ctx, query, args...)
 		})
 		if r != nil {
@@ -1057,7 +1023,7 @@ func _prepareContext(ctx context.Context, target *balancer, query string) (dbx *
 		}
 
 		// executing
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.PrepareContext(ctx, query)
 		})
 		if r != nil {
@@ -1124,7 +1090,7 @@ func _preparexContext(ctx context.Context, target *balancer, query string) (dbx 
 		}
 
 		// executing
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.PreparexContext(ctx, query)
 		})
 		if r != nil {
@@ -1195,7 +1161,7 @@ func _prepareNamedContext(ctx context.Context, target *balancer, query string) (
 		}
 
 		// executing
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.PrepareNamedContext(ctx, query)
 		})
 		if r != nil {
@@ -1245,7 +1211,7 @@ func _mustExec(ctx context.Context, target *balancer, query string, args ...inte
 			panic(err)
 		}
 
-		r, err = retryBackoff(query, func() (interface{}, error) {
+		r, err = retryFunc(query, func() (interface{}, error) {
 			return w.db.ExecContext(ctx, query, args...)
 		})
 		if r != nil {
@@ -1287,7 +1253,7 @@ func (dbs *DBs) MustExecContextOnSlave(ctx context.Context, query string, args .
 
 // MustBegin starts a transaction, and panics on error.
 // Transaction is bound to one of master connections.
-func (dbs *DBs) MustBegin() *sql.Tx {
+func (dbs *DBs) MustBegin() *Tx {
 	tx, err := dbs.Begin()
 	if err != nil {
 		panic(err)
@@ -1296,9 +1262,9 @@ func (dbs *DBs) MustBegin() *sql.Tx {
 }
 
 // MustBeginx starts a transaction, and panics on error.
-// Returns an *sqlx.Tx instead of an *sql.Tx.
+//
 // Transaction is bound to one of master connections.
-func (dbs *DBs) MustBeginx() *sqlx.Tx {
+func (dbs *DBs) MustBeginx() *Txx {
 	tx, err := dbs.Beginx()
 	if err != nil {
 		panic(err)
@@ -1306,8 +1272,7 @@ func (dbs *DBs) MustBeginx() *sqlx.Tx {
 	return tx
 }
 
-// MustBeginTx starts a transaction, and panics on error.  Returns an *sqlx.Tx instead
-// of an *sql.Tx.
+// MustBeginTx starts a transaction, and panics on error.
 //
 // The provided context is used until the transaction is committed or rolled
 // back. If the context is canceled, the sql package will roll back the
@@ -1315,7 +1280,7 @@ func (dbs *DBs) MustBeginx() *sqlx.Tx {
 // MustBeginContext is canceled.
 //
 // Transaction is bound to one of master connections.
-func (dbs *DBs) MustBeginTx(ctx context.Context, opts *sql.TxOptions) *sqlx.Tx {
+func (dbs *DBs) MustBeginTx(ctx context.Context, opts *sql.TxOptions) *Txx {
 	tx, err := dbs.BeginTxx(ctx, opts)
 	if err != nil {
 		panic(err)
@@ -1327,7 +1292,7 @@ func (dbs *DBs) MustBeginTx(ctx context.Context, opts *sql.TxOptions) *sqlx.Tx {
 // the driver.
 //
 // Transaction is bound to one of master connections.
-func (dbs *DBs) Begin() (*sql.Tx, error) {
+func (dbs *DBs) Begin() (*Tx, error) {
 	return dbs.BeginTx(context.Background(), nil)
 }
 
@@ -1343,7 +1308,7 @@ func (dbs *DBs) Begin() (*sql.Tx, error) {
 // an error will be returned.
 //
 // Transaction is bound to one of master connections.
-func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (res *sql.Tx, err error) {
+func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (res *Tx, err error) {
 	var (
 		w *wrapper
 		r interface{}
@@ -1356,11 +1321,13 @@ func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (res *sql.Tx, 
 		}
 
 		// executing
-		r, err = retryBackoff("START TRANSACTION", func() (interface{}, error) {
+		r, err = retryFunc("START TRANSACTION", func() (interface{}, error) {
 			return w.db.BeginTx(ctx, opts)
 		})
 		if r != nil {
-			res = r.(*sql.Tx)
+			res = &Tx{
+				Tx: r.(*sql.Tx),
+			}
 		}
 
 		// check networking/wsrep error
@@ -1373,10 +1340,10 @@ func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (res *sql.Tx, 
 	}
 }
 
-// Beginx begins a transaction and returns an *sqlx.Tx instead of an *sql.Tx.
+// Beginx begins a transaction.
 //
 // Transaction is bound to one of master connections.
-func (dbs *DBs) Beginx() (res *sqlx.Tx, err error) {
+func (dbs *DBs) Beginx() (res *Txx, err error) {
 	var (
 		w *wrapper
 		r interface{}
@@ -1389,11 +1356,13 @@ func (dbs *DBs) Beginx() (res *sqlx.Tx, err error) {
 		}
 
 		// executing
-		r, err = retryBackoff("START TRANSACTION", func() (interface{}, error) {
+		r, err = retryFunc("START TRANSACTION", func() (interface{}, error) {
 			return w.db.Beginx()
 		})
 		if r != nil {
-			res = r.(*sqlx.Tx)
+			res = &Txx{
+				Tx: r.(*sqlx.Tx),
+			}
 		}
 
 		// check networking/wsrep error
@@ -1406,8 +1375,7 @@ func (dbs *DBs) Beginx() (res *sqlx.Tx, err error) {
 	}
 }
 
-// BeginTxx begins a transaction and returns an *sqlx.Tx instead of an
-// *sql.Tx.
+// BeginTxx begins a transaction.
 //
 // The provided context is used until the transaction is committed or rolled
 // back. If the context is canceled, the sql package will roll back the
@@ -1415,7 +1383,7 @@ func (dbs *DBs) Beginx() (res *sqlx.Tx, err error) {
 // BeginxContext is canceled.
 //
 // Transaction is bound to one of master connections.
-func (dbs *DBs) BeginTxx(ctx context.Context, opts *sql.TxOptions) (res *sqlx.Tx, err error) {
+func (dbs *DBs) BeginTxx(ctx context.Context, opts *sql.TxOptions) (res *Txx, err error) {
 	var (
 		w *wrapper
 		r interface{}
@@ -1428,11 +1396,13 @@ func (dbs *DBs) BeginTxx(ctx context.Context, opts *sql.TxOptions) (res *sqlx.Tx
 		}
 
 		// executing
-		r, err = retryBackoff("START TRANSACTION", func() (interface{}, error) {
+		r, err = retryFunc("START TRANSACTION", func() (interface{}, error) {
 			return w.db.BeginTxx(ctx, opts)
 		})
 		if r != nil {
-			res = r.(*sqlx.Tx)
+			res = &Txx{
+				Tx: r.(*sqlx.Tx),
+			}
 		}
 
 		// check networking/wsrep error
@@ -1478,13 +1448,13 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 		driverName:      driverName,
 		readQuerySource: opts.readQuerySource,
 
-		masters:  newBalancer(nil, nMaster>>2, nMaster, opts.isWsrep),
+		masters:  newBalancer(context.Background(), nMaster>>2, nMaster, opts.isWsrep),
 		_masters: make([]*wrapper, nMaster),
 
-		slaves:  newBalancer(nil, nSlave>>2, nSlave, opts.isWsrep),
+		slaves:  newBalancer(context.Background(), nSlave>>2, nSlave, opts.isWsrep),
 		_slaves: make([]*wrapper, nSlave),
 
-		all:  newBalancer(nil, nAll>>2, nAll, opts.isWsrep),
+		all:  newBalancer(context.Background(), nAll>>2, nAll, opts.isWsrep),
 		_all: make([]*wrapper, nAll),
 	}
 
