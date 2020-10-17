@@ -25,13 +25,13 @@ func isErrBadConn(err error) bool {
 	return false
 }
 
-// ERROR 1213: Deadlock found when trying to get lock
-func isDeadlock(err error) bool {
+// IsDeadlock ERROR 1213: Deadlock found when trying to get lock
+func IsDeadlock(err error) bool {
 	return isErrCode(err, 1213)
 }
 
-// ERROR 1047: WSREP has not yet prepared node for application use
-func isWsrepNotReady(err error) bool {
+// IsWsrepNotReady ERROR 1047: WSREP has not yet prepared node for application use
+func IsWsrepNotReady(err error) bool {
 	return isErrCode(err, 1047)
 }
 

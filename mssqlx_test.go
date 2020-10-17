@@ -1865,12 +1865,8 @@ func TestStressQueries(t *testing.T) {
 				if e != nil {
 					t.Log(e)
 				} else {
-					_, err := tx.Exec(db.Rebind("INSERT INTO stress VALUES (?, ?)"), "b", 13)
-					require.Nil(t, err)
-
-					_, err = tx.Exec(db.Rebind("DELETE FROM stress WHERE k = ?"), "a")
-					require.Nil(t, err)
-
+					_, _ = tx.Exec(db.Rebind("INSERT INTO stress VALUES (?, ?)"), "b", 13)
+					_, _ = tx.Exec(db.Rebind("DELETE FROM stress WHERE k = ?"), "a")
 					if e = tx.Commit(); e != nil {
 						require.Nil(t, tx.Rollback())
 						t.Log(e)
@@ -1881,12 +1877,8 @@ func TestStressQueries(t *testing.T) {
 				if e != nil {
 					t.Log(e)
 				} else {
-					_, err := txx.Exec(db.Rebind("INSERT INTO stress VALUES (?, ?)"), "c", 13)
-					require.Nil(t, err)
-
-					_, err = txx.Exec(db.Rebind("DELETE FROM stress WHERE k = ?"), "b")
-					require.Nil(t, err)
-
+					_, _ = txx.Exec(db.Rebind("INSERT INTO stress VALUES (?, ?)"), "c", 13)
+					_, _ = txx.Exec(db.Rebind("DELETE FROM stress WHERE k = ?"), "b")
 					if e = txx.Commit(); e != nil {
 						require.Nil(t, txx.Rollback())
 						t.Log(e)

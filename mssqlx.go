@@ -537,7 +537,7 @@ func retryBackoff(query string, exec func() (interface{}, error)) (v interface{}
 			return
 
 		default:
-			if isErrBadConn(err) || isDeadlock(err) {
+			if isErrBadConn(err) || IsDeadlock(err) {
 				time.Sleep(5 * time.Millisecond)
 			} else {
 				return
@@ -557,7 +557,7 @@ func shouldFailure(w *wrapper, isWsrep bool, err error) bool {
 		return false
 	}
 
-	if err == ErrNetwork || (isWsrep && isWsrepNotReady(err)) {
+	if err == ErrNetwork || (isWsrep && IsWsrepNotReady(err)) {
 		return true
 	}
 
@@ -1297,7 +1297,7 @@ func (t *Tx) Commit() (err error) {
 			return
 
 		default:
-			if isErrBadConn(err) || isDeadlock(err) {
+			if isErrBadConn(err) || IsDeadlock(err) {
 				time.Sleep(5 * time.Millisecond)
 			} else {
 				return
@@ -1330,7 +1330,7 @@ func (t *Txx) Commit() (err error) {
 			return
 
 		default:
-			if isErrBadConn(err) || isDeadlock(err) {
+			if isErrBadConn(err) || IsDeadlock(err) {
 				time.Sleep(5 * time.Millisecond)
 			} else {
 				return
