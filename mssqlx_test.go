@@ -1895,7 +1895,7 @@ func TestStressQueries(t *testing.T) {
 			}
 		}
 
-		limit := 8
+		limit := 4
 		if db == sqDBs {
 			limit = 2
 		}
@@ -1906,7 +1906,7 @@ func TestStressQueries(t *testing.T) {
 		}
 
 		// notify workers
-		for i := 0; i < 1000; i++ {
+		for i := 0; i < 200; i++ {
 			ch <- struct{}{}
 		}
 		close(ch)

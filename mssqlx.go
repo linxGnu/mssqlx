@@ -542,7 +542,8 @@ func retryBackoff(query string, exec func() (interface{}, error)) (v interface{}
 			} else if !isDeadlock(err) {
 				return
 			} else {
-				time.Sleep(10 * time.Millisecond)
+				time.Sleep(5 * time.Millisecond)
+				retry = 0
 			}
 		}
 	}

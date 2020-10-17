@@ -12,11 +12,7 @@ import (
 
 // ERROR 1213: Deadlock found when trying to get lock
 func isDeadlock(err error) bool {
-	result := isErrCode(err, 1213)
-	if result {
-		fmt.Println("xxxxxxxxxxxxxxxxx")
-	}
-	return result
+	return isErrCode(err, 1213)
 }
 
 // ERROR 1047: WSREP has not yet prepared node for application use
