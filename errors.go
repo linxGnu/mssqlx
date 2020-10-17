@@ -1,6 +1,7 @@
 package mssqlx
 
 import (
+	"database/sql"
 	"database/sql/driver"
 	"fmt"
 	"os"
@@ -13,7 +14,7 @@ import (
 // check bad connection
 func isErrBadConn(err error) bool {
 	if err != nil {
-		if err == driver.ErrBadConn || err == mysql.ErrInvalidConn {
+		if err == driver.ErrBadConn || err == sql.ErrConnDone || err == mysql.ErrInvalidConn {
 			return true
 		}
 

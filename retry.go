@@ -12,8 +12,6 @@ func retryFunc(query string, f func() (interface{}, error)) (result interface{},
 		}
 
 		switch err {
-		case sql.ErrConnDone:
-
 		case sql.ErrTxDone, sql.ErrNoRows:
 			return
 
@@ -26,7 +24,7 @@ func retryFunc(query string, f func() (interface{}, error)) (result interface{},
 		}
 	}
 
-	if err == sql.ErrConnDone || isErrBadConn(err) {
+	if isErrBadConn(err) {
 		reportError(query, err)
 	}
 
