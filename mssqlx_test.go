@@ -1817,6 +1817,8 @@ func TestStressQueries(t *testing.T) {
 	}
 
 	_RunWithSchema(schema, t, func(db *DBs, t *testing.T) {
+		require.Equal(t, ReadQuerySourceAll, db.readQuerySource)
+
 		ch := make(chan struct{}, 100)
 
 		type StressType struct {
