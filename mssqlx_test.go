@@ -467,12 +467,12 @@ func TestConnectMasterSlave(t *testing.T) {
 
 		// check read-query source
 		db, _ = ConnectMasterSlaves(driver, nil, nil)
-		if db.readBalancer() != db.slaves {
+		if db.readBalancer() != db.all {
 			t.Fatal("Initialize master slave fail")
 		}
 
-		db, _ = ConnectMasterSlaves(driver, nil, nil, WithReadQuerySource(ReadQuerySourceAll))
-		if db.readBalancer() != db.all {
+		db, _ = ConnectMasterSlaves(driver, nil, nil, WithReadQuerySource(ReadQuerySourceSlaves))
+		if db.readBalancer() != db.slaves {
 			t.Fatal("Initialize master slave fail")
 		}
 	}
@@ -1817,6 +1817,8 @@ func TestStressQueries(t *testing.T) {
 	}
 
 	_RunWithSchema(schema, t, func(db *DBs, t *testing.T) {
+		require.Equal(t, ReadQuerySourceAll, db.readQuerySource)
+
 		ch := make(chan struct{}, 100)
 
 		type StressType struct {

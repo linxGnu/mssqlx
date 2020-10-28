@@ -4,13 +4,15 @@ package mssqlx
 type ReadQuerySource int
 
 const (
-	// ReadQuerySourceSlaves indicates: read-queries will be distributed only among slaves.
-	// This is default value.
+	// ReadQuerySourceSlaves setting indicates: read-queries will be distributed only among slaves.
 	//
 	// Note: there is no option for Master. One could use functions like `QueryMaster`, etc
 	// to query from masters only.
 	ReadQuerySourceSlaves ReadQuerySource = iota
-	// ReadQuerySourceAll indicates: read-queries will be distributed among both masters and slaves.
+
+	// ReadQuerySourceAll setting indicates: read-queries will be distributed among both masters and slaves.
+	//
+	// Note: this is default setting.
 	ReadQuerySourceAll
 )
 

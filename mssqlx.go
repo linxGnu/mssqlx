@@ -1432,7 +1432,7 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 	// default cluster options
 	opts := &clusterOptions{
 		isWsrep:         false,
-		readQuerySource: ReadQuerySourceSlaves,
+		readQuerySource: ReadQuerySourceAll,
 	}
 
 	for _, optFn := range options {
