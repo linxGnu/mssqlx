@@ -1,5 +1,11 @@
 package mssqlx
 
+import (
+	sqldblogger "github.com/simukti/sqldb-logger"
+	"github.com/simukti/sqldb-logger/logadapter/zapadapter"
+	"go.uber.org/zap"
+)
+
 // ReadQuerySource enums.
 type ReadQuerySource int
 
@@ -19,6 +25,9 @@ const (
 type clusterOptions struct {
 	isWsrep         bool
 	readQuerySource ReadQuerySource
+
+	logger     sqldblogger.Logger
+	loggerOpts []sqldblogger.Option
 }
 
 // Option setter.
@@ -35,5 +44,13 @@ func WithWsrep() Option {
 func WithReadQuerySource(source ReadQuerySource) Option {
 	return func(o *clusterOptions) {
 		o.readQuerySource = source
+	}
+}
+
+// WithLogger sets logger for dbs
+func WithZapLogger(logger *zap.Logger, opts ...sqldblogger.Option) Option {
+	return func(o *clusterOptions) {
+		o.logger = zapadapter.New(logger)
+		o.loggerOpts = opts
 	}
 }

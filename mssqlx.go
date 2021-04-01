@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	sqldblogger "github.com/simukti/sqldb-logger"
 )
 
 var (
@@ -932,7 +933,7 @@ func _get(ctx context.Context, target *balancer, dest interface{}, query string,
 // Any placeholder parameters are replaced with supplied args.
 // An error is returned if the result set is empty.
 func (dbs *DBs) Get(dest interface{}, query string, args ...interface{}) (err error) {
-	_, err = _get(context.Background(), dbs.slaves, dest, query, args...)
+	_, err = _get(context.Background(), dbs.readBalancer(), dest, query, args...)
 	return
 }
 
@@ -1466,6 +1467,18 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 	for i := range masterDSNs {
 		go func(mId, eId int) {
 			dbConn, err := sqlx.Open(driverName, masterDSNs[mId])
+
+			// set logger if possible
+			if opts.logger != nil {
+				db := sqldblogger.OpenDriver(
+					masterDSNs[mId],
+					dbConn.Driver(),
+					opts.logger,
+					opts.loggerOpts...,
+				)
+				dbConn = sqlx.NewDb(db, driverName)
+			}
+
 			dbs._masters[mId], errResult[eId] = &wrapper{db: dbConn, dsn: masterDSNs[mId]}, err
 			dbs.masters.add(dbs._masters[mId])
 
