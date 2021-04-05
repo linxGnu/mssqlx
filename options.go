@@ -4,7 +4,7 @@ import (
 	"github.com/rs/zerolog"
 	sqldblogger "github.com/simukti/sqldb-logger"
 	"github.com/simukti/sqldb-logger/logadapter/zapadapter"
-	"github.com/simukti/sqldb-logger/zerologadapter"
+	"github.com/simukti/sqldb-logger/logadapter/zerologadapter"
 	"go.uber.org/zap"
 )
 
