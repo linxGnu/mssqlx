@@ -1,8 +1,10 @@
 package mssqlx
 
 import (
+	"github.com/rs/zerolog"
 	sqldblogger "github.com/simukti/sqldb-logger"
 	"github.com/simukti/sqldb-logger/logadapter/zapadapter"
+	"github.com/simukti/sqldb-logger/zerologadapter"
 	"go.uber.org/zap"
 )
 
@@ -51,6 +53,13 @@ func WithReadQuerySource(source ReadQuerySource) Option {
 func WithZapLogger(logger *zap.Logger, opts ...sqldblogger.Option) Option {
 	return func(o *clusterOptions) {
 		o.logger = zapadapter.New(logger)
+		o.loggerOpts = opts
+	}
+}
+
+func WithZeroLogger(logger zerolog.Logger, opts ...sqldblogger.Option) Option {
+	return func(o *clusterOptions) {
+		o.logger = zerologadapter.New(logger)
 		o.loggerOpts = opts
 	}
 }
