@@ -932,7 +932,7 @@ func _get(ctx context.Context, target *balancer, dest interface{}, query string,
 // Any placeholder parameters are replaced with supplied args.
 // An error is returned if the result set is empty.
 func (dbs *DBs) Get(dest interface{}, query string, args ...interface{}) (err error) {
-	_, err = _get(context.Background(), dbs.slaves, dest, query, args...)
+	_, err = _get(context.Background(), dbs.readBalancer(), dest, query, args...)
 	return
 }
 
