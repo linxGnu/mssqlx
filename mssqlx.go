@@ -1458,43 +1458,61 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 		_all: make([]*wrapper, nAll),
 	}
 
-	// channel to sync routines
-	c := make(chan byte, len(errResult))
+	dbInstantiate := func(driverName, dsn string) (dbx *sqlx.DB, err error) {
+		var db *sql.DB
+		if opts.instantiate != nil {
+			db, err = opts.instantiate(driverName, dsn)
+		} else {
+			db, err = sql.Open(driverName, dsn)
+		}
 
-	// Concurrency connect to master
-	n := 0
+		if err == nil {
+			dbx = sqlx.NewDb(db, driverName)
+		}
+
+		return
+	}
+
+	var (
+		wg sync.WaitGroup
+		n  int
+	)
+
+	// concurrent connect to masters
 	for i := range masterDSNs {
+		wg.Add(1)
 		go func(mId, eId int) {
-			dbConn, err := sqlx.Open(driverName, masterDSNs[mId])
+			defer wg.Done()
+
+			dbConn, err := dbInstantiate(driverName, masterDSNs[mId])
 			dbs._masters[mId], errResult[eId] = &wrapper{db: dbConn, dsn: masterDSNs[mId]}, err
 			dbs.masters.add(dbs._masters[mId])
 
 			dbs._all[eId] = dbs._masters[mId]
 			dbs.all.add(dbs._masters[mId])
 
-			c <- 0
 		}(i, n)
 		n++
 	}
 
-	// Concurrency connect to slaves
+	// concurrent connect to slaves
 	for i := range slaveDSNs {
+		wg.Add(1)
 		go func(sId, eId int) {
-			dbConn, err := sqlx.Open(driverName, slaveDSNs[sId])
+			defer wg.Done()
+
+			dbConn, err := dbInstantiate(driverName, slaveDSNs[sId])
 			dbs._slaves[sId], errResult[eId] = &wrapper{db: dbConn, dsn: slaveDSNs[sId]}, err
 			dbs.slaves.add(dbs._slaves[sId])
 
 			dbs._all[eId] = dbs._slaves[sId]
 			dbs.all.add(dbs._slaves[sId])
-
-			c <- 0
 		}(i, n)
 		n++
 	}
 
-	for i := 0; i < len(errResult); i++ {
-		<-c
-	}
+	// wait all done
+	wg.Wait()
 
 	return dbs, errResult
 }

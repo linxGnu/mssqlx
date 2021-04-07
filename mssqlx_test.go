@@ -1947,3 +1947,12 @@ func TestStressQueries(t *testing.T) {
 		wg.Wait()
 	})
 }
+
+func TestFailOpenDB(t *testing.T) {
+	_, err := ConnectMasterSlaves("mysql", []string{"abc.com"}, []string{"abc.com"},
+		WithDBInstantiate(func(driverName, dsn string) (*sql.DB, error) {
+			return nil, fmt.Errorf("fake")
+		}),
+	)
+	require.NotEmpty(t, err)
+}
