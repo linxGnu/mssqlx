@@ -1478,7 +1478,7 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 		n  int
 	)
 
-	// concurrent connect to master
+	// concurrent connect to masters
 	for i := range masterDSNs {
 		wg.Add(1)
 		go func(mId, eId int) {
