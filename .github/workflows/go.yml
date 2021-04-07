@@ -1,56 +1,59 @@
-name: CI 
+name: CI
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
   pull_request:
-    branches: [ master ]
+    branches: [master]
 
 jobs:
-
   build:
     name: Build
     runs-on: ubuntu-latest
     steps:
+      - name: Linter
+        uses: golangci/golangci-lint-action@v2
+        with:
+          version: v1.31
 
-    - uses: mirromutth/mysql-action@v1.1
-      with:
-        character set server: 'utf8' # Optional, default value is 'utf8mb4'. The '--character-set-server' option for mysqld
-        collation server: 'utf8_general_ci' # Optional, default value is 'utf8mb4_general_ci'. The '--collation-server' option for mysqld
-        mysql database: 'test' # Optional, default value is "test". The specified database which will be create
-        mysql user: 'test' # Required if "mysql root password" is empty, default is empty. The superuser for the specified database. Can use secrets, too
-        mysql password: 'test' # Required if "mysql user" exists. The password for the "mysql user"
+      - uses: mirromutth/mysql-action@v1.1
+        with:
+          character set server: "utf8" # Optional, default value is 'utf8mb4'. The '--character-set-server' option for mysqld
+          collation server: "utf8_general_ci" # Optional, default value is 'utf8mb4_general_ci'. The '--collation-server' option for mysqld
+          mysql database: "test" # Optional, default value is "test". The specified database which will be create
+          mysql user: "test" # Required if "mysql root password" is empty, default is empty. The superuser for the specified database. Can use secrets, too
+          mysql password: "test" # Required if "mysql user" exists. The password for the "mysql user"
 
-    - name: Set up Go 1.x
-      uses: actions/setup-go@v2
-      with:
-        go-version: ^1.13
-      id: go
+      - name: Set up Go 1.x
+        uses: actions/setup-go@v2
+        with:
+          go-version: ^1.13
+        id: go
 
-    - name: Check out code into the Go module directory
-      uses: actions/checkout@v2
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v2
 
-    - name: Get dependencies
-      run: |
-        go get -v -t -d ./...
-        if [ -f Gopkg.toml ]; then
-            curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
-            dep ensure
-        fi
+      - name: Get dependencies
+        run: |
+          go get -v -t -d ./...
+          if [ -f Gopkg.toml ]; then
+              curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
+              dep ensure
+          fi
 
-    - name: Test Coverage
-      env:
-        MSSQLX_MYSQL_DSN: test:test@tcp(localhost:3306)/test
-      run: go test -v -race -count=1 -coverprofile=coverage.out
-    
-    - name: Convert coverage to lcov
-      uses: jandelgado/gcov2lcov-action@v1.0.4
-      with:
-        infile: coverage.out
-        outfile: coverage.lcov
+      - name: Test Coverage
+        env:
+          MSSQLX_MYSQL_DSN: test:test@tcp(localhost:3306)/test
+        run: go test -v -race -count=1 -coverprofile=coverage.out
 
-    - name: Coveralls
-      uses: coverallsapp/github-action@v1.1.0
-      with:
-        github-token: ${{ secrets.github_token }}
-        path-to-lcov: coverage.lcov
+      - name: Convert coverage to lcov
+        uses: jandelgado/gcov2lcov-action@v1.0.4
+        with:
+          infile: coverage.out
+          outfile: coverage.lcov
+
+      - name: Coveralls
+        uses: coverallsapp/github-action@v1.1.0
+        with:
+          github-token: ${{ secrets.github_token }}
+          path-to-lcov: coverage.lcov
