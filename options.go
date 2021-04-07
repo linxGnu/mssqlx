@@ -1,5 +1,7 @@
 package mssqlx
 
+import "database/sql"
+
 // ReadQuerySource enums.
 type ReadQuerySource int
 
@@ -19,10 +21,14 @@ const (
 type clusterOptions struct {
 	isWsrep         bool
 	readQuerySource ReadQuerySource
+	instantiate     Instantiate
 }
 
 // Option setter.
 type Option func(*clusterOptions)
+
+// Instantiate db.
+type Instantiate func(driverName, dsn string) (*sql.DB, error)
 
 // WithWsrep indicates galera/wsrep cluster
 func WithWsrep() Option {
@@ -35,5 +41,12 @@ func WithWsrep() Option {
 func WithReadQuerySource(source ReadQuerySource) Option {
 	return func(o *clusterOptions) {
 		o.readQuerySource = source
+	}
+}
+
+// WithDBInstantiate overwrite instantiate for db conn.
+func WithDBInstantiate(f Instantiate) Option {
+	return func(o *clusterOptions) {
+		o.instantiate = f
 	}
 }
