@@ -1466,11 +1466,10 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 			db, err = sql.Open(driverName, dsn)
 		}
 
-		if err != nil {
-			return
+		if err == nil {
+			dbx = sqlx.NewDb(db, driverName)
 		}
 
-		dbx = sqlx.NewDb(db, driverName)
 		return
 	}
 
