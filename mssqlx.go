@@ -13,13 +13,13 @@ import (
 
 var (
 	// ErrNetwork networking error
-	ErrNetwork = errors.New("Network error/Connection refused")
+	ErrNetwork = errors.New("network error/connection refused")
 
 	// ErrNoConnection there is no connection to db
-	ErrNoConnection = errors.New("No connection available")
+	ErrNoConnection = errors.New("no connection available")
 
 	// ErrNoConnectionOrWsrep there is no connection to db or Wsrep is not ready
-	ErrNoConnectionOrWsrep = errors.New("No connection available or Wsrep is not ready")
+	ErrNoConnectionOrWsrep = errors.New("no connection available or Wsrep is not ready")
 )
 
 const (
@@ -761,93 +761,79 @@ func (dbs *DBs) QueryxContextOnMaster(ctx context.Context, query string, args ..
 	return
 }
 
-func _queryRow(ctx context.Context, target *balancer, query string, args ...interface{}) (dbr *wrapper, res *sql.Row, err error) {
-	var w *wrapper
-
-	if w, err = getDBFromBalancer(target); err != nil {
-		reportError(query, err)
-	} else {
-		res, dbr = w.db.QueryRowContext(ctx, query, args...), w
+func (dbs *DBs) _queryRow(ctx context.Context, target *balancer, query string, args ...interface{}) *sql.Row {
+	w, err := getDBFromBalancer(target)
+	if err != nil {
+		// no available node -> pick one
+		w = dbs._all[0]
 	}
-
-	return
+	return w.db.QueryRowContext(ctx, query, args...)
 }
 
 // QueryRow executes a query on slaves that is expected to return at most one row.
 // QueryRow always returns a non-nil value. Errors are deferred until
 // Row's Scan method is called.
-func (dbs *DBs) QueryRow(query string, args ...interface{}) (r *sql.Row, err error) {
-	_, r, err = _queryRow(context.Background(), dbs.readBalancer(), query, args...)
-	return
+func (dbs *DBs) QueryRow(query string, args ...interface{}) *sql.Row {
+	return dbs._queryRow(context.Background(), dbs.readBalancer(), query, args...)
 }
 
 // QueryRowOnMaster executes a query on masters that is expected to return at most one row.
 // QueryRow always returns a non-nil value. Errors are deferred until
 // Row's Scan method is called.
-func (dbs *DBs) QueryRowOnMaster(query string, args ...interface{}) (r *sql.Row, err error) {
-	_, r, err = _queryRow(context.Background(), dbs.masters, query, args...)
-	return
+func (dbs *DBs) QueryRowOnMaster(query string, args ...interface{}) *sql.Row {
+	return dbs._queryRow(context.Background(), dbs.masters, query, args...)
 }
 
 // QueryRowContext executes a query on slaves that is expected to return at most one row.
 // QueryRow always returns a non-nil value. Errors are deferred until
 // Row's Scan method is called.
-func (dbs *DBs) QueryRowContext(ctx context.Context, query string, args ...interface{}) (r *sql.Row, err error) {
-	_, r, err = _queryRow(ctx, dbs.readBalancer(), query, args...)
-	return
+func (dbs *DBs) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return dbs._queryRow(ctx, dbs.readBalancer(), query, args...)
 }
 
 // QueryRowContextOnMaster executes a query on masters that is expected to return at most one row.
 // QueryRow always returns a non-nil value. Errors are deferred until
 // Row's Scan method is called.
-func (dbs *DBs) QueryRowContextOnMaster(ctx context.Context, query string, args ...interface{}) (r *sql.Row, err error) {
-	_, r, err = _queryRow(ctx, dbs.masters, query, args...)
-	return
+func (dbs *DBs) QueryRowContextOnMaster(ctx context.Context, query string, args ...interface{}) *sql.Row {
+	return dbs._queryRow(ctx, dbs.masters, query, args...)
 }
 
-func _queryRowx(ctx context.Context, target *balancer, query string, args ...interface{}) (dbr *wrapper, res *sqlx.Row, err error) {
-	var w *wrapper
-
-	if w, err = getDBFromBalancer(target); err != nil {
-		reportError(query, err)
-	} else {
-		res, dbr = w.db.QueryRowxContext(ctx, query, args...), w
+func (dbs *DBs) _queryRowx(ctx context.Context, target *balancer, query string, args ...interface{}) *sqlx.Row {
+	w, err := getDBFromBalancer(target)
+	if err != nil {
+		// no available node -> pick one
+		w = dbs._all[0]
 	}
-
-	return
+	return w.db.QueryRowxContext(ctx, query, args...)
 }
 
 // QueryRowx executes a query on slaves that is expected to return at most one row.
 // But return sqlx.Row instead of sql.Row.
 // QueryRow always returns a non-nil value. Errors are deferred until
 // Row's Scan method is called.
-func (dbs *DBs) QueryRowx(query string, args ...interface{}) (r *sqlx.Row, err error) {
-	_, r, err = _queryRowx(context.Background(), dbs.readBalancer(), query, args...)
-	return
+func (dbs *DBs) QueryRowx(query string, args ...interface{}) *sqlx.Row {
+	return dbs._queryRowx(context.Background(), dbs.readBalancer(), query, args...)
 }
 
 // QueryRowxOnMaster executes a query on masters that is expected to return at most one row.
 // QueryRow always returns a non-nil value. Errors are deferred until
 // Row's Scan method is called.
-func (dbs *DBs) QueryRowxOnMaster(query string, args ...interface{}) (r *sqlx.Row, err error) {
-	_, r, err = _queryRowx(context.Background(), dbs.masters, query, args...)
-	return
+func (dbs *DBs) QueryRowxOnMaster(query string, args ...interface{}) *sqlx.Row {
+	return dbs._queryRowx(context.Background(), dbs.masters, query, args...)
 }
 
 // QueryRowxContext executes a query on slaves that is expected to return at most one row.
 // QueryRow always returns a non-nil value. Errors are deferred until
 // Row's Scan method is called.
-func (dbs *DBs) QueryRowxContext(ctx context.Context, query string, args ...interface{}) (r *sqlx.Row, err error) {
-	_, r, err = _queryRowx(ctx, dbs.readBalancer(), query, args...)
-	return
+func (dbs *DBs) QueryRowxContext(ctx context.Context, query string, args ...interface{}) *sqlx.Row {
+	return dbs._queryRowx(ctx, dbs.readBalancer(), query, args...)
 }
 
 // QueryRowxContextOnMaster executes a query on masters that is expected to return at most one row.
 // QueryRow always returns a non-nil value. Errors are deferred until
 // Row's Scan method is called.
-func (dbs *DBs) QueryRowxContextOnMaster(ctx context.Context, query string, args ...interface{}) (r *sqlx.Row, err error) {
-	_, r, err = _queryRowx(ctx, dbs.masters, query, args...)
-	return
+func (dbs *DBs) QueryRowxContextOnMaster(ctx context.Context, query string, args ...interface{}) *sqlx.Row {
+	return dbs._queryRowx(ctx, dbs.masters, query, args...)
 }
 
 func _select(ctx context.Context, target *balancer, dest interface{}, query string, args ...interface{}) (dbr *wrapper, err error) {

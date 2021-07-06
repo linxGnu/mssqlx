@@ -46,10 +46,6 @@ func newBalancer(ctx context.Context, numHealthChecker int, numDbInstance int, i
 	return c
 }
 
-func (c *balancer) size() int {
-	return c.dbs.size()
-}
-
 func (c *balancer) getHealthCheckPeriod() uint64 {
 	return atomic.LoadUint64(&c.healthCheckPeriod)
 }
