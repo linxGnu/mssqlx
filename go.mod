@@ -1,11 +1,13 @@
 module github.com/linxGnu/mssqlx
 
+go 1.16
+
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-sql-driver/mysql v1.6.0
-	github.com/jmoiron/sqlx v1.3.2-0.20210128211550-a1d5e6473423
-	github.com/lib/pq v1.10.0
-	github.com/mattn/go-sqlite3 v1.14.6
+	github.com/jmoiron/sqlx v1.3.4
+	github.com/lib/pq v1.10.2
+	github.com/mattn/go-sqlite3 v1.14.7
 	github.com/stretchr/testify v1.7.0
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b // indirect
 )

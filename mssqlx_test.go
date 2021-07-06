@@ -287,6 +287,18 @@ func TestParseError(t *testing.T) {
 	}
 }
 
+func (c *balancer) size() int {
+	return c.dbs.size()
+}
+
+func (b *dbList) size() (v int) {
+	list, stored := b.list.Load().([]*wrapper)
+	if stored {
+		v = len(list)
+	}
+	return
+}
+
 func TestDbBalancer(t *testing.T) {
 	dbB := newBalancer(context.Background(), 0, 4, true)
 
@@ -942,37 +954,14 @@ func TestNilReceivers(t *testing.T) {
 			t.Error("Expected error when getting into nil struct ptr.")
 		}
 
-		if _, err = db.QueryRow("SELECT * FROM person LIMIT 1"); err != nil {
-			t.Error("Fail query row")
-		}
-
-		if r, err := db.QueryRowOnMaster("SELECT * FROM person LIMIT 2"); err != nil || r == nil {
-			t.Error("Fail query row")
-		}
-
-		if _, err = db.QueryRowContext(context.Background(), "SELECT * FROM person LIMIT 1"); err != nil {
-			t.Error("Fail query row")
-		}
-
-		if r, err := db.QueryRowContextOnMaster(context.Background(), "SELECT * FROM person LIMIT 2"); err != nil || r == nil {
-			t.Error("Fail query row")
-		}
-
-		if _, err = db.QueryRowx("SELECT * FROM person LIMIT 1"); err != nil {
-			t.Error("Fail query row")
-		}
-
-		if r, err := db.QueryRowxOnMaster("SELECT * FROM person LIMIT 2"); err != nil || r == nil {
-			t.Error("Fail query row")
-		}
-
-		if _, err = db.QueryRowxContext(context.Background(), "SELECT * FROM person LIMIT 1"); err != nil {
-			t.Error("Fail query row")
-		}
-
-		if r, err := db.QueryRowxContextOnMaster(context.Background(), "SELECT * FROM person LIMIT 2"); err != nil || r == nil {
-			t.Error("Fail query row")
-		}
+		require.NotNil(t, db.QueryRow("SELECT * FROM person LIMIT 1"))
+		require.NotNil(t, db.QueryRowOnMaster("SELECT * FROM person LIMIT 2"))
+		require.NotNil(t, db.QueryRowContext(context.Background(), "SELECT * FROM person LIMIT 1"))
+		require.NotNil(t, db.QueryRowContextOnMaster(context.Background(), "SELECT * FROM person LIMIT 2"))
+		require.NotNil(t, db.QueryRowx("SELECT * FROM person LIMIT 1"))
+		require.NotNil(t, db.QueryRowxOnMaster("SELECT * FROM person LIMIT 2"))
+		require.NotNil(t, db.QueryRowxContext(context.Background(), "SELECT * FROM person LIMIT 1"))
+		require.NotNil(t, db.QueryRowxContextOnMaster(context.Background(), "SELECT * FROM person LIMIT 2"))
 
 		var pp *[]Person
 		if err = db.Select(pp, "SELECT * FROM person"); err == nil {

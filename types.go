@@ -48,14 +48,6 @@ type dbList struct {
 	_            [9]uint64
 }
 
-func (b *dbList) size() (v int) {
-	list, stored := b.list.Load().([]*wrapper)
-	if stored {
-		v = len(list)
-	}
-	return
-}
-
 func (b *dbList) current() (w *wrapper) {
 	list, stored := b.list.Load().([]*wrapper)
 	if stored {
