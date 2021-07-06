@@ -954,7 +954,9 @@ func TestNilReceivers(t *testing.T) {
 			t.Error("Expected error when getting into nil struct ptr.")
 		}
 
-		require.NotNil(t, db.QueryRow("SELECT * FROM person LIMIT 1"))
+		var num int
+		require.NotNil(t, db.QueryRow("SELECT count(1) FROM person").Scan(&num))
+		require.True(t, num > 0)
 		require.NotNil(t, db.QueryRowOnMaster("SELECT * FROM person LIMIT 2"))
 		require.NotNil(t, db.QueryRowContext(context.Background(), "SELECT * FROM person LIMIT 1"))
 		require.NotNil(t, db.QueryRowContextOnMaster(context.Background(), "SELECT * FROM person LIMIT 2"))
