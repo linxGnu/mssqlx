@@ -955,7 +955,7 @@ func TestNilReceivers(t *testing.T) {
 		}
 
 		var num int
-		require.NotNil(t, db.QueryRow("SELECT count(1) FROM person").Scan(&num))
+		require.Nil(t, db.QueryRow("SELECT count(1) FROM person").Scan(&num))
 		require.True(t, num > 0)
 		require.NotNil(t, db.QueryRowOnMaster("SELECT * FROM person LIMIT 2"))
 		require.NotNil(t, db.QueryRowContext(context.Background(), "SELECT * FROM person LIMIT 1"))
