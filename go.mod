@@ -1,7 +1,5 @@
 module github.com/linxGnu/mssqlx
 
-go 1.16
-
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-sql-driver/mysql v1.6.0
