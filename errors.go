@@ -3,18 +3,22 @@ package mssqlx
 import (
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/lib/pq"
 )
 
 // check bad connection
 func isErrBadConn(err error) bool {
 	if err != nil {
-		if err == driver.ErrBadConn || err == sql.ErrConnDone || err == mysql.ErrInvalidConn {
+		if errors.Is(err, driver.ErrBadConn) ||
+			errors.Is(err, mysql.ErrInvalidConn) ||
+			errors.Is(err, pq.ErrChannelNotOpen) {
 			return true
 		}
 
@@ -42,7 +46,6 @@ func isErrCode(err error, code int) bool {
 	}
 
 	switch mErr := err.(type) {
-
 	case *mysql.MySQLError:
 		return mErr.Number == uint16(code)
 
@@ -52,16 +55,10 @@ func isErrCode(err error, code int) bool {
 	}
 }
 
-func parseError(w *wrapper, err error) error {
-	if err == nil {
-		return nil
-	}
-
-	if w != nil && ping(w) != nil {
-		return ErrNetwork
-	}
-
-	return err
+func isStdErr(err error) bool {
+	return errors.Is(err, sql.ErrNoRows) ||
+		errors.Is(err, sql.ErrTxDone) ||
+		errors.Is(err, sql.ErrConnDone)
 }
 
 func reportError(v string, err error) {
