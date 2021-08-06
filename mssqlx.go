@@ -523,10 +523,7 @@ func getDBFromBalancer(target *balancer) (db *wrapper, err error) {
 }
 
 func shouldFailure(w *wrapper, isWsrep bool, err error) (bool, error) {
-	if err == nil ||
-		errors.Is(err, sql.ErrNoRows) ||
-		errors.Is(err, sql.ErrConnDone) ||
-		errors.Is(err, sql.ErrTxDone) {
+	if err == nil || isStdErr(err) {
 		return false, err
 	}
 
