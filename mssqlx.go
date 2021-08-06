@@ -536,6 +536,7 @@ func shouldFailure(w *wrapper, isWsrep bool, err error) (bool, error) {
 
 	if e := ping(w); e != nil {
 		err = multierror.Append(err, e).ErrorOrNil()
+		return true, err
 	}
 
 	return false, err
