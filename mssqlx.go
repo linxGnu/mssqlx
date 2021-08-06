@@ -8,13 +8,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hashicorp/go-multierror"
 	"github.com/jmoiron/sqlx"
 )
 
 var (
-	// ErrNetwork networking error
-	ErrNetwork = errors.New("network error/connection refused")
-
 	// ErrNoConnection there is no connection to db
 	ErrNoConnection = errors.New("no connection available")
 
@@ -524,16 +522,21 @@ func getDBFromBalancer(target *balancer) (db *wrapper, err error) {
 	return
 }
 
-func shouldFailure(w *wrapper, isWsrep bool, err error) bool {
-	if err = parseError(w, err); err == nil {
-		return false
+func shouldFailure(w *wrapper, isWsrep bool, err error) (bool, error) {
+	if err == nil || isStdErr(err) {
+		return false, err
 	}
 
-	if err == ErrNetwork || (isWsrep && IsWsrepNotReady(err)) {
-		return true
+	if isWsrep && IsWsrepNotReady(err) {
+		return true, err
 	}
 
-	return false
+	if e := ping(w); e != nil {
+		err = multierror.Append(err, e).ErrorOrNil()
+		return true, err
+	}
+
+	return false, err
 }
 
 func _namedQuery(ctx context.Context, target *balancer, query string, arg interface{}) (res *sqlx.Rows, err error) {
@@ -556,8 +559,9 @@ func _namedQuery(ctx context.Context, target *balancer, query string, arg interf
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(w, target.isWsrep, err) {
-			target.failure(w)
+		var should bool
+		if should, err = shouldFailure(w, target.isWsrep, err); should {
+			target.failure(w, err)
 			continue
 		}
 
@@ -610,8 +614,9 @@ func _namedExec(ctx context.Context, target *balancer, query string, arg interfa
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(w, target.isWsrep, err) {
-			target.failure(w)
+		var should bool
+		if should, err = shouldFailure(w, target.isWsrep, err); should {
+			target.failure(w, err)
 			continue
 		}
 
@@ -664,8 +669,9 @@ func _query(ctx context.Context, target *balancer, query string, args ...interfa
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(w, target.isWsrep, err) {
-			target.failure(w)
+		var should bool
+		if should, err = shouldFailure(w, target.isWsrep, err); should {
+			target.failure(w, err)
 			continue
 		}
 
@@ -723,8 +729,9 @@ func _queryx(ctx context.Context, target *balancer, query string, args ...interf
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(w, target.isWsrep, err) {
-			target.failure(w)
+		var should bool
+		if should, err = shouldFailure(w, target.isWsrep, err); should {
+			target.failure(w, err)
 			continue
 		}
 
@@ -851,8 +858,9 @@ func _select(ctx context.Context, target *balancer, dest interface{}, query stri
 		})
 
 		// check networking/wsrep error
-		if shouldFailure(w, target.isWsrep, err) {
-			target.failure(w)
+		var should bool
+		if should, err = shouldFailure(w, target.isWsrep, err); should {
+			target.failure(w, err)
 			continue
 		}
 
@@ -904,8 +912,9 @@ func _get(ctx context.Context, target *balancer, dest interface{}, query string,
 		})
 
 		// check networking/wsrep error
-		if shouldFailure(w, target.isWsrep, err) {
-			target.failure(w)
+		var should bool
+		if should, err = shouldFailure(w, target.isWsrep, err); should {
+			target.failure(w, err)
 			continue
 		}
 
@@ -967,8 +976,9 @@ func _exec(ctx context.Context, target *balancer, query string, args ...interfac
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(w, target.isWsrep, err) {
-			target.failure(w)
+		var should bool
+		if should, err = shouldFailure(w, target.isWsrep, err); should {
+			target.failure(w, err)
 			continue
 		}
 
@@ -1017,8 +1027,9 @@ func _prepareContext(ctx context.Context, target *balancer, query string) (dbx *
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(w, target.isWsrep, err) {
-			target.failure(w)
+		var should bool
+		if should, err = shouldFailure(w, target.isWsrep, err); should {
+			target.failure(w, err)
 			continue
 		}
 
@@ -1084,8 +1095,9 @@ func _preparexContext(ctx context.Context, target *balancer, query string) (dbx 
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(w, target.isWsrep, err) {
-			target.failure(w)
+		var should bool
+		if should, err = shouldFailure(w, target.isWsrep, err); should {
+			target.failure(w, err)
 			continue
 		}
 
@@ -1155,8 +1167,9 @@ func _prepareNamedContext(ctx context.Context, target *balancer, query string) (
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(w, target.isWsrep, err) {
-			target.failure(w)
+		var should bool
+		if should, err = shouldFailure(w, target.isWsrep, err); should {
+			target.failure(w, err)
 			continue
 		}
 
@@ -1205,8 +1218,9 @@ func _mustExec(ctx context.Context, target *balancer, query string, args ...inte
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(w, target.isWsrep, err) {
-			target.failure(w)
+		var should bool
+		if should, err = shouldFailure(w, target.isWsrep, err); should {
+			target.failure(w, err)
 			continue
 		}
 
@@ -1317,8 +1331,9 @@ func (dbs *DBs) BeginTx(ctx context.Context, opts *sql.TxOptions) (res *Tx, err 
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(w, dbs.masters.isWsrep, err) {
-			dbs.masters.failure(w)
+		var should bool
+		if should, err = shouldFailure(w, dbs.masters.isWsrep, err); should {
+			dbs.masters.failure(w, err)
 			continue
 		}
 
@@ -1352,8 +1367,9 @@ func (dbs *DBs) Beginx() (res *Txx, err error) {
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(w, dbs.masters.isWsrep, err) {
-			dbs.masters.failure(w)
+		var should bool
+		if should, err = shouldFailure(w, dbs.masters.isWsrep, err); should {
+			dbs.masters.failure(w, err)
 			continue
 		}
 
@@ -1392,8 +1408,9 @@ func (dbs *DBs) BeginTxx(ctx context.Context, opts *sql.TxOptions) (res *Txx, er
 		}
 
 		// check networking/wsrep error
-		if shouldFailure(w, dbs.masters.isWsrep, err) {
-			dbs.masters.failure(w)
+		var should bool
+		if should, err = shouldFailure(w, dbs.masters.isWsrep, err); should {
+			dbs.masters.failure(w, err)
 			continue
 		}
 

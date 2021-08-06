@@ -24,17 +24,14 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/require"
 )
 
 var TestWPostgres = false // test with postgres?
-var TestWSqlite = false   // test with sqlite?
 var TestWMysql = false    // test with mysql?
 
 var myDBs *DBs
 var pgDBs *DBs
-var sqDBs *DBs
 
 func init() {
 	ConnectMasterSlave()
@@ -43,11 +40,9 @@ func init() {
 func ConnectMasterSlave() {
 	pgdsn := os.Getenv("MSSQLX_POSTGRES_DSN")
 	mydsn := os.Getenv("MSSQLX_MYSQL_DSN")
-	sqdsn := os.Getenv("MSSQLX_SQLITE_DSN")
 
 	TestWPostgres = pgdsn != "skip" && pgdsn != ""
 	TestWMysql = mydsn != "skip" && mydsn != ""
-	TestWSqlite = sqdsn != "skip" && sqdsn != ""
 
 	if !strings.Contains(mydsn, "parseTime=true") {
 		mydsn += "?parseTime=true"
@@ -59,10 +54,6 @@ func ConnectMasterSlave() {
 
 	if !TestWMysql {
 		fmt.Println("Disabling MySQL tests.")
-	}
-
-	if !TestWSqlite {
-		fmt.Println("Disabling SQLite tests.")
 	}
 
 	if TestWPostgres {
@@ -81,15 +72,6 @@ func ConnectMasterSlave() {
 		myDBs.SetMaxIdleConns(2)
 		myDBs.SetMaxOpenConns(10)
 		myDBs.SetConnMaxLifetime(3 * time.Millisecond)
-	}
-
-	if TestWSqlite {
-		masterDSNs := []string{sqdsn, sqdsn}
-		slaveDSNs := []string{sqdsn, sqdsn}
-		sqDBs, _ = ConnectMasterSlaves("sqlite3", masterDSNs, slaveDSNs)
-		sqDBs.SetMaxIdleConns(2)
-		sqDBs.SetMaxOpenConns(10)
-		pgDBs.SetConnMaxLifetime(3 * time.Millisecond)
 	}
 }
 
@@ -224,10 +206,6 @@ func _RunWithSchema(schema Schema, t *testing.T, test func(db *DBs, t *testing.T
 		create, drop := schema.Postgres()
 		runner(pgDBs, t, create, drop)
 	}
-	if TestWSqlite {
-		create, drop := schema.Sqlite3()
-		runner(sqDBs, t, create, drop)
-	}
 	if TestWMysql {
 		create, drop := schema.MySQL()
 		runner(myDBs, t, create, drop)
@@ -268,34 +246,14 @@ func _loadDefaultFixture(db *DBs, t *testing.T) {
 	}
 }
 
-func TestParseError(t *testing.T) {
-	err := parseError(nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	errT := fmt.Errorf("abc")
-	if err = parseError(nil, errT); err != errT {
-		t.Fatal(err)
-	}
-
-	db, _ := sqlx.Open("postgres", "user=test1 dbname=test2 sslmode=disable")
-
-	errT = fmt.Errorf("abc")
-	if err = parseError(&wrapper{db: db, dsn: "user=test1 dbname=test2 sslmode=disable"}, errT); err != ErrNetwork {
-		t.Fatal(err)
-	}
-}
-
 func (c *balancer) size() int {
 	return c.dbs.size()
 }
 
 func (b *dbList) size() (v int) {
-	list, stored := b.list.Load().([]*wrapper)
-	if stored {
-		v = len(list)
-	}
+	b.lk.RLock()
+	v = len(b.list)
+	b.lk.RUnlock()
 	return
 }
 
@@ -345,21 +303,18 @@ func TestDbBalancer(t *testing.T) {
 	if x := dbB.get(false); x.db != db3 {
 		t.Fatal("DbBalancer: get fail")
 	} else {
-		dbB.failure(x)
+		dbB.failure(x, nil)
 		if dbB.size() != 3 || (&wrapper{db: db3, dsn: dsn}).checkWsrepReady() {
 			t.Fatal("DbBalancer: failure fail")
 		}
 
-		dbB.failure(nil)
+		dbB.failure(nil, nil)
 		if dbB.size() != 3 || (&wrapper{db: db3, dsn: dsn}).checkWsrepReady() {
 			t.Fatal("DbBalancer: failure fail")
 		}
 	}
 
 	dbB.destroy()
-	if dbB.size() != 0 {
-		t.Fatal("DbBalancer: destroy fail")
-	}
 }
 
 func TestConnectMasterSlave(t *testing.T) {
@@ -1920,9 +1875,6 @@ func TestStressQueries(t *testing.T) {
 		}
 
 		limit := 4
-		if db == sqDBs {
-			limit = 2
-		}
 
 		wg.Add(limit)
 		for i := 0; i < limit; i++ {

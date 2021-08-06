@@ -2,6 +2,7 @@ package mssqlx
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"time"
 )
@@ -22,7 +23,7 @@ type balancer struct {
 
 // new balancer and start health checkers
 func newBalancer(ctx context.Context, numHealthChecker int, numDbInstance int, isWsrep bool) *balancer {
-	if numHealthChecker <= 0 {
+	if numHealthChecker < 2 {
 		numHealthChecker = 2 // at least two checkers
 	}
 
@@ -71,55 +72,42 @@ func (c *balancer) get(shouldBalancing bool) *wrapper {
 }
 
 // failure make a db node become failure and auto health tracking
-func (c *balancer) failure(w *wrapper) {
+func (c *balancer) failure(w *wrapper, err error) {
 	if c.dbs.remove(w) { // remove this node
-		c.sendFailure(w)
-	}
-}
+		reportError(fmt.Sprintf("deactive connection:[%s] for health checking due to error", w.dsn), err)
 
-func (c *balancer) sendFailure(w *wrapper) {
-	select {
-	case <-c.ctx.Done():
-		return
-
-	case c.fail <- w: // give to health checker
+		select {
+		case <-c.ctx.Done():
+		case c.fail <- w:
+		}
 	}
 }
 
 // healthChecker daemon to check health of db connection
 func (c *balancer) healthChecker() {
-	doneCh := c.ctx.Done()
-
-	var db *wrapper
 	for {
 		select {
-		case <-doneCh:
+		case <-c.ctx.Done():
 			return
 
-		case db = <-c.fail:
+		case db := <-c.fail:
 			if ping(db) == nil && (!c.isWsrep || db.checkWsrepReady()) {
 				c.dbs.add(db)
 				continue
+			} else {
+				c.fail <- db
 			}
 
 			select {
-			case <-doneCh:
+			case <-c.ctx.Done():
 				return
 
 			case <-time.After(time.Duration(c.getHealthCheckPeriod()) * time.Millisecond):
-			}
-
-			select {
-			case <-doneCh:
-				return
-
-			case c.fail <- db:
 			}
 		}
 	}
 }
 
 func (c *balancer) destroy() {
-	c.dbs.clear()
 	c.cancel()
 }
