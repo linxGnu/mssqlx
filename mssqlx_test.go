@@ -1778,7 +1778,7 @@ func TestStressQueries(t *testing.T) {
 
 			for range ch {
 				if _, err := db.Exec(db.Rebind("INSERT INTO stress VALUES (?, ?)"), "a", 12); err != nil {
-					t.Fatal(err)
+					panic(err)
 				}
 
 				time.Sleep(time.Millisecond)
