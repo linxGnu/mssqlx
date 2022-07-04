@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"sync/atomic"
 	"time"
-
-	"github.com/go-sql-driver/mysql"
 )
 
 // database balancer and health checker.
@@ -77,7 +75,7 @@ func (c *balancer) get(shouldBalancing bool) *wrapper {
 func (c *balancer) failure(w *wrapper, err error) {
 	if c.dbs.remove(w) { // remove this node
 		reportError(
-			fmt.Sprintf("deactive connection:[%s] for health checking due to error", parseHostnameFromDSN(w.db.DriverName(), w.dsn)),
+			fmt.Sprintf("deactive connection:[%s] for health checking due to error", hostnameFromDSN(w.db.DriverName(), w.dsn)),
 			err,
 		)
 
@@ -115,18 +113,4 @@ func (c *balancer) healthChecker() {
 
 func (c *balancer) destroy() {
 	c.cancel()
-}
-
-func parseHostnameFromDSN(driverName, dsn string) string {
-	switch driverName {
-	case "mysql":
-		if cf, err := mysql.ParseDSN(dsn); err == nil {
-			return fmt.Sprintf("%s(%s)", cf.Net, cf.Addr)
-		}
-	case "postgres":
-		if host, err := parsePostgresDSN(dsn); err == nil {
-			return host
-		}
-	}
-	return ""
 }

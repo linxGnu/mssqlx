@@ -5,22 +5,24 @@ package mssqlx
 import (
 	"fmt"
 	"unicode"
+
+	"github.com/go-sql-driver/mysql"
 )
 
-// scanner implements a tokenizer for libpq-style option strings.
-type scanner struct {
+// pqScanner implements a tokenizer for libpq-style option strings.
+type pqScanner struct {
 	s []rune
 	i int
 }
 
-// newScanner returns a new scanner initialized with the option string s.
-func newScanner(s string) *scanner {
-	return &scanner{[]rune(s), 0}
+// newPQScanner returns a new scanner initialized with the option string s.
+func newPQScanner(s string) *pqScanner {
+	return &pqScanner{[]rune(s), 0}
 }
 
 // Next returns the next rune.
 // It returns 0, false if the end of the text has been reached.
-func (s *scanner) Next() (rune, bool) {
+func (s *pqScanner) Next() (rune, bool) {
 	if s.i >= len(s.s) {
 		return 0, false
 	}
@@ -31,7 +33,7 @@ func (s *scanner) Next() (rune, bool) {
 
 // SkipSpaces returns the next non-whitespace rune.
 // It returns 0, false if the end of the text has been reached.
-func (s *scanner) SkipSpaces() (rune, bool) {
+func (s *pqScanner) SkipSpaces() (rune, bool) {
 	r, ok := s.Next()
 	for unicode.IsSpace(r) && ok {
 		r, ok = s.Next()
@@ -39,11 +41,11 @@ func (s *scanner) SkipSpaces() (rune, bool) {
 	return r, ok
 }
 
-// parseOpts parses the options from name and adds them to the values.
+// parses the postgres-options from name and adds them to the values.
 //
 // The parsing code is based on conninfo_parse from libpq's fe-connect.c
-func parseOpts(name string, o map[string]string) error {
-	s := newScanner(name)
+func parsePQOpts(name string, o map[string]string) error {
+	s := newPQScanner(name)
 
 	for {
 		var (
@@ -135,7 +137,7 @@ func parseOpts(name string, o map[string]string) error {
 func parsePostgresDSN(dsn string) (string, error) {
 	meta := make(map[string]string)
 
-	if err := parseOpts(dsn, meta); err != nil {
+	if err := parsePQOpts(dsn, meta); err != nil {
 		return "", err
 	}
 
@@ -145,4 +147,20 @@ func parsePostgresDSN(dsn string) (string, error) {
 	}
 
 	return fmt.Sprintf("%s:%s", host, port), nil
+}
+
+func hostnameFromDSN(driverName, dsn string) string {
+	switch driverName {
+	case "mysql":
+		if cf, err := mysql.ParseDSN(dsn); err == nil {
+			return fmt.Sprintf("%s(%s)", cf.Net, cf.Addr)
+		}
+
+	case "postgres":
+		if host, err := parsePostgresDSN(dsn); err == nil {
+			return host
+		}
+	}
+
+	return ""
 }
