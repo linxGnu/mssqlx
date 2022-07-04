@@ -74,7 +74,10 @@ func (c *balancer) get(shouldBalancing bool) *wrapper {
 // failure make a db node become failure and auto health tracking
 func (c *balancer) failure(w *wrapper, err error) {
 	if c.dbs.remove(w) { // remove this node
-		reportError(fmt.Sprintf("deactive connection:[%s] for health checking due to error", w.dsn), err)
+		reportError(
+			fmt.Sprintf("deactive connection:[%s] for health checking due to error", hostnameFromDSN(w.db.DriverName(), w.dsn)),
+			err,
+		)
 
 		select {
 		case <-c.ctx.Done():
