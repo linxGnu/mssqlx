@@ -19,9 +19,9 @@ const (
 )
 
 type clusterOptions struct {
-	isWsrep         bool
-	readQuerySource ReadQuerySource
 	instantiate     Instantiate
+	readQuerySource ReadQuerySource
+	isWsrep         bool
 }
 
 // Option setter.

@@ -1,13 +1,12 @@
 // The following environment variables, if set, will be used:
 //
-//	* MSSQLX_POSTGRES_DSN
-//	* MSSQLX_MYSQL_DSN
-//	* MSSQLX_SQLITE_DSN
+//   - MSSQLX_POSTGRES_DSN
+//   - MSSQLX_MYSQL_DSN
+//   - MSSQLX_SQLITE_DSN
 //
 // Set any of these variables to 'skip' to skip them.  Note that for MySQL,
 // the string '?parseTime=True' will be appended to the DSN if it's not there
 // already.
-//
 package mssqlx
 
 import (
@@ -27,11 +26,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var TestWPostgres = false // test with postgres?
-var TestWMysql = false    // test with mysql?
+var (
+	TestWPostgres = false // test with postgres?
+	TestWMysql    = false // test with mysql?
+)
 
-var myDBs *DBs
-var pgDBs *DBs
+var (
+	myDBs *DBs
+	pgDBs *DBs
+)
 
 func init() {
 	ConnectMasterSlave()
@@ -133,10 +136,10 @@ drop table employees;
 }
 
 type Person struct {
-	FirstName string `db:"first_name"`
-	LastName  string `db:"last_name"`
-	Email     string
 	AddedAt   time.Time `db:"added_at"`
+	FirstName string    `db:"first_name"`
+	LastName  string    `db:"last_name"`
+	Email     string
 }
 
 type Place struct {
@@ -146,8 +149,8 @@ type Place struct {
 }
 
 type PlacePtr struct {
-	Country string
 	City    *string
+	Country string
 	TelCode int
 }
 
@@ -169,9 +172,9 @@ type EmbedConflict struct {
 type SliceMember struct {
 	Country   string
 	City      sql.NullString
-	TelCode   int
 	People    []Person `db:"-"`
 	Addresses []Place  `db:"-"`
+	TelCode   int
 }
 
 func MultiExec(e sqlx.Execer, query string) {
@@ -566,7 +569,7 @@ func TestMissingName(t *testing.T) {
 			FirstName string `db:"first_name"`
 			LastName  string `db:"last_name"`
 			Email     string
-			//AddedAt time.Time `db:"added_at"`
+			// AddedAt time.Time `db:"added_at"`
 		}
 
 		// test Select first
@@ -878,8 +881,7 @@ func TestSelectSliceMapTimes(t *testing.T) {
 			t.Fatal(err)
 		}
 		for rows.Next() {
-			_, err := sqlx.SliceScan(rows)
-			if err != nil {
+			if _, err = sqlx.SliceScan(rows); err != nil {
 				t.Error(err)
 			}
 		}
@@ -895,7 +897,6 @@ func TestSelectSliceMapTimes(t *testing.T) {
 				t.Error(err)
 			}
 		}
-
 	})
 }
 
@@ -951,7 +952,7 @@ func TestNilReceivers(t *testing.T) {
 }
 
 func TestNamedQueries(t *testing.T) {
-	var schema = Schema{
+	schema := Schema{
 		create: `
 			CREATE TABLE place (
 				id integer PRIMARY KEY,
@@ -983,10 +984,10 @@ func TestNamedQueries(t *testing.T) {
 
 	_RunWithSchema(schema, t, func(db *DBs, t *testing.T) {
 		type Person struct {
+			AddedAt   *time.Time     `db:"added_at"`
 			FirstName sql.NullString `db:"first_name"`
 			LastName  sql.NullString `db:"last_name"`
 			Email     sql.NullString
-			AddedAt   *time.Time `db:"added_at"`
 		}
 
 		// BindNamed
@@ -1096,8 +1097,8 @@ func TestNamedQueries(t *testing.T) {
 
 		// Test nested structs
 		type Place struct {
-			ID   int            `db:"id"`
 			Name sql.NullString `db:"name"`
+			ID   int            `db:"id"`
 		}
 		type PlacePerson struct {
 			FirstName sql.NullString `db:"first_name"`
@@ -1183,7 +1184,7 @@ func TestNamedQueries(t *testing.T) {
 }
 
 func TestNilInsert(t *testing.T) {
-	var schema = Schema{
+	schema := Schema{
 		create: `
 			CREATE TABLE tt (
 				id integer,
@@ -1194,8 +1195,8 @@ func TestNilInsert(t *testing.T) {
 
 	_RunWithSchema(schema, t, func(db *DBs, t *testing.T) {
 		type TT struct {
-			ID    int
 			Value *string
+			ID    int
 		}
 		var v, v2 TT
 		r := db.Rebind
@@ -1231,7 +1232,7 @@ func TestNilInsert(t *testing.T) {
 }
 
 func TestScanErrors(t *testing.T) {
-	var schema = Schema{
+	schema := Schema{
 		create: `
 			CREATE TABLE kv (
 				k text,
@@ -1242,8 +1243,8 @@ func TestScanErrors(t *testing.T) {
 
 	_RunWithSchema(schema, t, func(db *DBs, t *testing.T) {
 		type WrongTypes struct {
-			K int
 			V string
+			K int
 		}
 		_, err := db.Exec(db.Rebind("INSERT INTO kv (k, v) VALUES (?, ?)"), "hi", 1)
 		if err != nil {
@@ -1351,7 +1352,7 @@ func TestUsages(t *testing.T) {
 		if err != nil {
 			t.Error(err)
 		}
-		//fmt.Printf("%#v\n%#v\n%#v\n", placesptr[0], placesptr[1], placesptr[2])
+		// fmt.Printf("%#v\n%#v\n%#v\n", placesptr[0], placesptr[1], placesptr[2])
 
 		// if you have null fields and use SELECT *, you must use sql.Null* in your struct
 		// this test also verifies that you can use either a []Struct{} or a []*Struct{}
@@ -1698,7 +1699,7 @@ func TestUsages(t *testing.T) {
 }
 
 func Test_EmbeddedLiterals(t *testing.T) {
-	var schema = Schema{
+	schema := Schema{
 		create: `
 			CREATE TABLE x (
 				k text
@@ -1711,10 +1712,8 @@ func Test_EmbeddedLiterals(t *testing.T) {
 			K *string
 		}
 		type t2 struct {
-			Inline struct {
-				F string
-			}
-			K *string
+			K      *string
+			Inline struct{ F string }
 		}
 
 		_, err := db.Exec(db.Rebind("INSERT INTO x (k) VALUES (?), (?), (?);"), "one", "two", "three")
@@ -1753,7 +1752,7 @@ func Test_ErrBadConnChecker(t *testing.T) {
 }
 
 func TestStressQueries(t *testing.T) {
-	var schema = Schema{
+	schema := Schema{
 		create: `
 			CREATE TABLE stress (
 				k text,
