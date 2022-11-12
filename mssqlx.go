@@ -38,16 +38,14 @@ func ping(w *wrapper) (err error) {
 
 // DBs sqlx wrapper supports querying master-slave database connections for HA and scalability, auto-balancer integrated.
 type DBs struct {
+	masters         *balancer
+	slaves          *balancer
+	all             *balancer
 	driverName      string
+	_masters        []*wrapper
+	_slaves         []*wrapper
+	_all            []*wrapper
 	readQuerySource ReadQuerySource
-
-	masters *balancer
-	slaves  *balancer
-	all     *balancer
-
-	_masters []*wrapper
-	_slaves  []*wrapper
-	_all     []*wrapper
 }
 
 // DriverName returns the driverName passed to the Open function for this DB.
@@ -442,7 +440,7 @@ func _mapperFunc(target []*wrapper, mf func(string) string) {
 	for ind, db := range target {
 		if db != nil {
 			wg.Add(1)
-			go func(db *wrapper, ind int) {
+			go func(db *wrapper, _ int) {
 				db.db.MapperFunc(mf)
 				wg.Done()
 			}(db, ind)
@@ -1493,7 +1491,6 @@ func ConnectMasterSlaves(driverName string, masterDSNs []string, slaveDSNs []str
 
 			dbs._all[eId] = dbs._masters[mId]
 			dbs.all.add(dbs._masters[mId])
-
 		}(i, n)
 		n++
 	}
